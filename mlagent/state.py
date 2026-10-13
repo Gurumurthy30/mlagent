@@ -1,162 +1,217 @@
-"""Ledger state: every shape the agents read and write. Data only, no logic.
+"""The ledger: the memory of one run. It is saved as memory/ledger.json after every step.
 
-Rules (dedupe, gain > std, plateau, budget) live in ledger.py / controller.py.
-Models used to validate LLM output ignore extra keys, so a weak model's
-stray fields do not fail the run.
+It holds small, validated facts and file paths. File contents never go in here.
+Each section has one writer agent (see the plan). Ids always come from code, never from the LLM.
 """
 
-from typing import Any, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel
 
-TaskType = Literal["binary", "multiclass", "multilabel", "regression", "ordinal", "other"]
-Direction = Literal["maximize", "minimize"]
-CVKind = Literal["kfold", "stratified", "group", "stratified_group", "time"]
-ExpKind = Literal["feature", "model", "tune"]  # persisted in ledger.json: do not rename
-ExpStatus = Literal["pending", "running", "done", "failed"]  # persisted in ledger.json: do not rename
-QueueSource = Literal["strategist", "analyzer"]  # persisted in ledger.json: do not rename
-RunSource = Literal["experimenter", "tuner"]  # persisted in ledger.json: do not rename
-VerdictKind = Literal["approve", "reject"]  # persisted in ledger.json: do not rename
-RunStatus = Literal["running", "done", "stopped"]  # persisted in ledger.json: do not rename
+SCHEMA_VERSION = 1
 
-
-class Base(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-
-# ---- problem / env (written by CLI) ----------------------------------------
-
-class Problem(Base):
-    goal: str
-    target: str
-    metric: str
-    direction: Direction
-    task_type: TaskType
-    train_path: str
-    test_path: str | None = None
-    id_column: str | None = None
-    sample_submission_path: str | None = None
+ChecklistStatus = Literal["open", "covered", "not_applicable"]
+Priority = Literal["high", "medium", "low"]
+Verdict = Literal["approve", "reject"]
+ReviewFocus = Literal["features", "model", "tune", "data", "finish"]
+LoopFocus = Literal["start", "features", "model", "tune", "data", "finish"]
+Phase = Literal["data_engineer", "data_analyst", "ml_lead", "experiment_loop", "submitter", "done"]
+RunStatus = Literal["running", "done", "failed"]
+StopReason = Literal[
+    "target", "plateau", "budget", "crashes", "llm_unavailable", "agent_failed", "reviewer_finish"
+]
 
 
-class Budget(Base):
-    max_experiments: int = 15
-    max_minutes: int = 60
-    plateau_n: int = 3        # approved runs without a counted gain
-    analyze_every: int = 3    # K: run the Analyzer every K runs
-    tune_top_n: int = 3
-    tune_trials: int = 20     # search trials per tuned model
-    max_consecutive_crashes: int = 3
-    loop_fraction: float = 0.85   # loop stops at this share of max_minutes; rest is for Tuner + Finisher
-    max_run_minutes: int = 15
-    tune_minutes_per_model: int = 15
+class FileInfo(BaseModel):
+    path: str
+    size_mb: float = 0.0
+    kind: str = ""  # table, image, audio, text, document, model, other
+    role: str = ""  # train, test, sample_submission, description, other
 
 
-class Env(Base):
-    seed: int = 42
-    started_at: float | None = None          # epoch seconds, set by CLI
-    library_versions: dict[str, str] = Field(default_factory=dict)
-    budget: Budget = Field(default_factory=Budget)
+class ProjectBrief(BaseModel):
+    summary: str = ""
+    files: list[FileInfo] = []
+    modality: str = ""  # tabular, image, text, audio, time_series, ...
+    task_family: str = ""  # classification, regression, clustering, forecasting, ...
+    target: str = ""
+    id_column: str = ""
+    primary_metric: str = ""
+    higher_is_better: bool = True
+    extra_metrics: list[str] = []
+    deliverable_format: str = ""  # what the predictions file must look like
+    has_large_files: bool = False
+    open_questions: list[str] = []
 
 
-# ---- profile (Profiler) ----------------------------------------------------
-
-class Profile(Base):
-    questions: list[str] = Field(default_factory=list)
-    column_roles: dict[str, str] = Field(default_factory=dict)  # col -> numeric|categorical|datetime|id|text|constant
-    target_stats: dict[str, Any] = Field(default_factory=dict)
-    missing: dict[str, float] = Field(default_factory=dict)     # col -> fraction missing
-    leakage_flags: list[str] = Field(default_factory=list)
-    notes: list[str] = Field(default_factory=list)
-    modality: list[str] = Field(default_factory=list)           # tabular|text|image|audio|timeseries|graph|video|other
-    task_form: str | None = None                                # e.g. "binary classification, probabilities expected"
-    data_files: list[dict[str, Any]] = Field(default_factory=list)  # path, kind, items, links_to_train_by, notes
+class Finding(BaseModel):
+    finding_id: str
+    statement: str
+    evidence: str = ""
+    implication: str = ""
+    priority: Priority = "medium"
 
 
-# ---- strategy (Strategist) -------------------------------------------------
-
-class CVScheme(Base):
-    kind: CVKind
-    n_splits: int = 5
-    group_col: str | None = None
-    time_col: str | None = None
+class FeatureIdea(BaseModel):
+    description: str
+    finding_id: str = ""
 
 
-class Strategy(Base):
-    validation: CVScheme
-    folds_path: str | None = None      # set by code after folds.json is saved
-    holdout_path: str | None = None    # set by code after the holdout is saved
+class EdaReport(BaseModel):
+    checklist: dict[str, ChecklistStatus] = {}  # checklist item -> coverage state
+    findings: list[Finding] = []
+    issues: list[str] = []
+    feature_ideas: list[FeatureIdea] = []
+    leakage_risks: list[str] = []
+    validation_hints: list[str] = []  # time or group structure, imbalance, ...
+    model_hints: list[str] = []
+    eda_loops_used: int = 0
+
+
+class ExperimentPlan(BaseModel):
+    validation_scheme: str = ""  # kfold, stratified_kfold, group_kfold, time_split, ...
+    validation_reason: str = ""
+    splits_path: str = ""
+    primary_metric: str = ""
+    higher_is_better: bool = True
+    extra_metrics: list[str] = []
+    baseline_description: str = ""
     target_score: float | None = None
-    risks: list[str] = Field(default_factory=list)
-    domain_notes: list[str] = Field(default_factory=list)  # recalled approaches, UNVERIFIED
+    use_gpu: bool = False
+    risks: list[str] = []
+    playbook: str = ""  # hints for this modality and task, written by the ML Lead
 
 
-# ---- queue / runs ----------------------------------------------------------
-
-class QueueItem(Base):
-    id: str = ""                       # assigned by ledger.py, not by the LLM
-    hypothesis: str
-    change: str                        # the ONE change this experiment makes
-    kind: ExpKind
-    params: dict[str, Any] = Field(default_factory=dict)
-    base: str | None = None            # exp_id this builds on (hill-climbing)
-    status: ExpStatus = "pending"      # persisted in ledger.json: do not rename
-    source: QueueSource = "strategist" # persisted in ledger.json: do not rename
+class FeatureRecord(BaseModel):
+    feature_id: str
+    name: str
+    reason: str = ""
+    finding_id: str = ""
+    score_gain: float | None = None
+    kept: bool = False
+    feature_version: int = 0  # the features_vN.py file that first included it
 
 
-class Run(Base):
-    exp_id: str
-    cv_mean: float | None = None
-    cv_std: float | None = None
-    holdout: float | None = None
-    oof_path: str | None = None
-    test_pred_path: str | None = None  # test predictions in submission format
-    artifact: str | None = None
-    script_path: str | None = None
-    seconds: float = 0.0
-    seed: int = 42
-    error: str | None = None           # a crash is a Run with error, not a CV attempt
-    source: RunSource = "experimenter" # persisted in ledger.json: do not rename
-    fold_scores: list[float] | None = None  # per-fold validation scores
-    train_score: float | None = None        # mean train score if available
+class ExperimentRun(BaseModel):
+    experiment_id: str
+    focus: LoopFocus = "start"
+    model_family: str = ""
+    model_params: dict = {}
+    description: str = ""
+    feature_version: int = 0
+    script_path: str = ""
+    artifact_dir: str = ""
+    validation_scores: list[float] = []  # one score per validation split
+    score_mean: float | None = None
+    score_std: float | None = None
+    holdout_score: float | None = None
+    extra_scores: dict[str, float] = {}
+    validation_predictions_path: str = ""
+    test_predictions_path: str = ""
+    model_path: str = ""
+    iteration: int = 0  # the experiment-loop round that made this run
+    error: str = ""  # not empty means the run crashed
+
+    @property
+    def crashed(self) -> bool:
+        return bool(self.error)
 
 
-# ---- validation / analysis (Validator, Analyzer) ---------------------------
-
-class ValidationRecord(Base):
-    exp_id: str
-    verdict: VerdictKind
-    reasons: list[str] = Field(default_factory=list)
-    signals_checked: list[str] = Field(default_factory=list)
+class Evaluation(BaseModel):
+    experiment_id: str
+    verdict: Verdict
+    reasons: list[str] = []
+    checks: dict = {}
 
 
-class Analysis(Base):
-    after_exp: str
-    bottleneck: str
-    evidence: str
-    new_ids: list[str] = Field(default_factory=list)
+class Review(BaseModel):
+    iteration: int
+    best_experiment_id: str = ""
+    assessment: str = ""  # what improved, what did not, where the bottleneck is
+    focus: ReviewFocus
+    reason: str = ""
+    instructions: list[str] = []  # up to 5 points for the next agent
+    question: str = ""  # only when focus is "data"
+    guard_note: str = ""  # filled by code when it replaced the Reviewer's choice
+    reviewed_focus: LoopFocus = "start"  # the focus of the round this review is about
+    counted_gain: bool = False  # did that round produce a counted gain over the best run
 
 
-# ---- final (Finisher) ------------------------------------------------------
+class FinalResult(BaseModel):
+    best_experiment_id: str = ""
+    ensemble_description: str = ""
+    predictions_path: str = ""
+    check_messages: list[str] = []
+    report_path: str = ""
 
-class FinalResult(Base):
-    ensemble: dict[str, Any] | None = None     # {method, members, weights, cv}
-    submission_path: str | None = None
-    checks: dict[str, bool] = Field(default_factory=dict)
-    report_path: str | None = None
 
+class Ledger(BaseModel):
+    schema_version: int = SCHEMA_VERSION
 
-# ---- the ledger ------------------------------------------------------------
+    # Written by the CLI
+    user_task: str = ""  # the user's own words, kept as typed
+    user_metrics_text: str = ""
+    created_at: str = ""
 
-class Ledger(Base):
-    problem: Problem
-    env: Env = Field(default_factory=Env)
-    profile: Profile | None = None
-    strategy: Strategy | None = None
-    queue: list[QueueItem] = Field(default_factory=list)
-    runs: list[Run] = Field(default_factory=list)
-    validation: list[ValidationRecord] = Field(default_factory=list)
-    analysis: list[Analysis] = Field(default_factory=list)
-    docs: dict[str, str] = Field(default_factory=dict)  # library -> cheat sheet
-    final: FinalResult | None = None
+    # Written by the agents
+    brief: ProjectBrief = ProjectBrief()
+    eda: EdaReport = EdaReport()
+    plan: ExperimentPlan = ExperimentPlan()
+    features: list[FeatureRecord] = []
+    current_feature_version: int = 0
+    runs: list[ExperimentRun] = []
+    evaluations: list[Evaluation] = []
+    reviews: list[Review] = []
+    final: FinalResult = FinalResult()
+
+    # Written by the graph
+    phase: Phase = "data_engineer"
+    focus: LoopFocus = "start"
+    iteration: int = 0  # experiment-loop rounds finished (one Reviewer decision each)
+    data_reentries_used: int = 0
+    last_tuned_iteration: int = -1  # round index of the last tune round, -1 when never
+    last_features_changed: bool = True
     status: RunStatus = "running"
-    stop_reason: str | None = None     # target | plateau | budget | minutes | empty_queue | rate_limit
+    stop_reason: StopReason | None = None
+    error_message: str = ""
+
+    def next_experiment_id(self) -> str:
+        return f"experiment_{len(self.runs) + 1:03d}"
+
+    def next_feature_id(self) -> str:
+        return f"feature_{len(self.features) + 1:03d}"
+
+    def next_finding_id(self) -> str:
+        return f"finding_{len(self.eda.findings) + 1:03d}"
+
+    def find_run(self, experiment_id: str) -> ExperimentRun | None:
+        for run in self.runs:
+            if run.experiment_id == experiment_id:
+                return run
+        return None
+
+    def find_evaluation(self, experiment_id: str) -> Evaluation | None:
+        for evaluation in reversed(self.evaluations):
+            if evaluation.experiment_id == experiment_id:
+                return evaluation
+        return None
+
+    def approved_runs(self) -> list[ExperimentRun]:
+        approved_ids = {e.experiment_id for e in self.evaluations if e.verdict == "approve"}
+        return [
+            run
+            for run in self.runs
+            if run.experiment_id in approved_ids and not run.crashed and run.score_mean is not None
+        ]
+
+    def best_approved_run(self) -> ExperimentRun | None:
+        approved = self.approved_runs()
+        if not approved:
+            return None
+        if self.plan.higher_is_better:
+            return max(approved, key=lambda run: run.score_mean)
+        return min(approved, key=lambda run: run.score_mean)
+
+    def recent_crashes(self, count: int) -> list[ExperimentRun]:
+        crashed_runs = [run for run in self.runs if run.crashed]
+        return crashed_runs[-count:]

@@ -1,0 +1,50 @@
+"""Events: how agents report progress without knowing anything about the UI.
+
+An agent calls event_bus.emit(...). The console UI and the log file are listeners.
+To add another UI later, subscribe one more listener. No agent changes.
+"""
+
+import sys
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import StrEnum
+
+
+class EventType(StrEnum):
+    AGENT_STARTED = "agent_started"
+    AGENT_FINISHED = "agent_finished"
+    INFO = "info"
+    DECISION = "decision"
+    CODE_RUN = "code_run"
+    WARNING = "warning"
+    ERROR = "error"
+
+
+@dataclass
+class AgentEvent:
+    event_type: EventType
+    agent_name: str
+    message: str
+    data: dict = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.now)
+
+
+EventListener = Callable[[AgentEvent], None]
+
+
+class EventBus:
+    def __init__(self) -> None:
+        self._listeners: list[EventListener] = []
+
+    def subscribe(self, listener: EventListener) -> None:
+        self._listeners.append(listener)
+
+    def emit(self, event_type: EventType, agent_name: str, message: str, **data) -> None:
+        event = AgentEvent(event_type, agent_name, message, data)
+        for listener in self._listeners:
+            try:
+                listener(event)
+            except Exception as listener_error:
+                # A broken display must never stop the ML run.
+                print(f"Event listener failed: {listener_error}", file=sys.stderr)

@@ -1,285 +1,183 @@
-# mlagent — Autonomous Multi-Agent Machine Learning Engineer
+# mlagent
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![LangGraph](https://img.shields.io/badge/orchestration-LangGraph-orange.svg)](https://github.com/langchain-ai/langgraph)
-[![Ollama](https://img.shields.io/badge/llm-Ollama-purple.svg)](https://ollama.com)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-green.svg)](https://github.com)
+A multi-agent command line system that runs a machine learning project from start to finish.
+You go to the project folder, run one command, say what the task is, and the agents explore the
+data, plan the validation, build features, train and check models, tune the best ones, and
+write a report and a predictions file. All language model calls go to a local
+[Ollama](https://ollama.com) model through `langchain-ollama`. The agents are wired together
+with LangGraph.
 
-**`mlagent`** is a production-grade, CLI multi-agent machine learning engineer built on **LangGraph**. It autonomously explores, codes, evaluates, diagnoses, tunes, and ensembles machine learning models for tabular datasets and Kaggle competitions.
+It is meant for any kind of ML task: tabular, images, text, audio, time series, supervised or
+not. The agents are told what the task is in your own words, and they write the code that fits.
 
-Driven by a single local or remote LLM (default `gemma4:31b-cloud` or any compatible model via Ollama) and governed by a **deterministic controller**, `mlagent` prevents hallucinations, maintains strictly honest cross-validation folds, self-heals from runtime and memory errors, and generates competitive submission files.
+## Requirements
 
----
+- Python 3.11 or newer
+- Ollama running, with the model from `config.yaml` already pulled (default `gemma4:31b`)
+- A machine that can run the code the agents write. Image, text and audio tasks want a GPU.
 
-## Architecture & How It Works
+## Install
 
-<p align="center">
-  <img src="assets/mlagent Autonomous ML Workflow Infographic.png" alt="mlagent Autonomous ML Workflow Infographic" width="100%">
-</p>
+Windows (PowerShell):
 
-`mlagent` orchestrates 8 specialized agents around a shared, immutable experiment ledger:
-
-```
-                      ┌──────────────────────┐
-                      │    START (Dataset)   │
-                      └──────────┬───────────┘
-                                 │
-                                 ▼
-                      ┌──────────────────────┐
-                      │    DATA PROFILER     │  (Schema, distributions, leak risks)
-                      └──────────┬───────────┘
-                                 │
-                                 ▼
-                      ┌──────────────────────┐
-                      │  EXPERIMENT PLANNER  │  (Hypothesis queue generation)
-                      └──────────┬───────────┘
-                                 │
-                                 ▼
-            ┌─────────► ┌─────────────────────┐
-            │           │ PIPELINE CONTROLLER │ ◄─────────────────────────┐
-            │           └──────────┬──────────┘                           │
-            │                      │ Batches ≤ workers                    │
-            │                      ▼                                      │
-            │           ┌─────────────────────┐                           │
-            │           │  EXPERIMENT RUNNER  │                           │
-            │           │   & SCRIPT WRITER   │                           │
-            │           └──────────┬──────────┘                           │
-            │                      │                                      │
-            │                      ├─► [Crashes]                          │
-            │                      │     ├─► API Error ──► API Docs ──────┤
-            │                      │     ├─► OOM Error ──► Downgrade ─────┤
-            │                      │     └─► Logic Err ──► Analyzer ──────┤
-            │                      ▼                                      │
-            │           ┌─────────────────────┐                           │
-            │           │    RUN VALIDATOR    │                           │
-            │           └──────────┬──────────┘                           │
-            │                      │                                      │
-            │                      ▼ (Every K runs)                       │
-            │           ┌─────────────────────┐                           │
-            │           │  RESULTS ANALYZER   ├───────────────────────────┘
-            │           └─────────────────────┘
-            │
-            │ (Budget / Target reached)
-            ▼
-┌─────────────────────────┐
-│  HYPERPARAMETER TUNER   │  (Optuna hyperparameter study on top performers)
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│    FINAL SUBMISSION     │  (Single / Greedy / Voting / Stacking on exact folds)
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│    LEADERBOARD CHECK    │  (Detect CV/LB drift, upload final submission)
-└───────────┬─────────────┘
-            │
-            ▼
-          [ END ]
-```
-
-### Specialized Agents
-
-| Agent Name | Module | Role & Responsibility |
-|---|---|---|
-| **Data Profiler** | `data_profiler.py` | Audits dataset schema, column types, leak risks, modalities, and tagged distribution notes. |
-| **Experiment Planner** | `experiment_planner.py` | Determines CV strategy (stratified, grouped, temporal) and populates the initial experiment queue. |
-| **Script Writer** | `script_writer.py` | Generates self-contained, executable Python scripts for model training and feature engineering. |
-| **Experiment Runner** | `experiment_runner.py` | Executes experiment scripts in isolated child processes with hardware and timeout monitoring. |
-| **Run Validator** | `run_validator.py` | Verifies run outputs for target leakage, OOF sanity, submission shape, and valid score metrics. |
-| **Results Analyzer** | `results_analyzer.py` | Identifies performance bottlenecks and dynamically introduces refined hypotheses to the queue. |
-| **API Docs Lookup** | `api_docs_lookup.py` | Inspects local library signatures and consults curated documentation upon execution failures. |
-| **Hyperparameter Tuner** | `hyperparameter_tuner.py` | Runs Optuna optimization studies on top-performing models using identical validation folds. |
-| **Final Submission** | `final_submission.py` | Ensembles best models (Single, Greedy, Voting, Stacking) and generates `submission.csv` and `report.md`. |
-
----
-
-## Key Features
-
-- **Autonomous End-to-End Pipeline**: From raw CSV to cross-validated feature engineering, model training, Optuna tuning, and stacking.
-- **Strictly Honest Cross-Validation**: Fixed `folds.json` and `holdout.json` partition created up-front. All candidates, feature steps, and ensemble layers are evaluated strictly out-of-fold.
-- **Self-Healing Execution Loop**:
-  - **API / Syntax Errors**: Triggers the **API Docs Lookup** agent (local introspection first, allowlisted official doc search fallback).
-  - **OOM / Resource Limits**: Applies automatic level downgrades (Level 1: lighter hyperparameters; Level 2: CPU fallback).
-  - **Logic Errors**: The **Results Analyzer** agent triages failure causes and dynamically queues counter-hypotheses.
-- **Cross-Platform & Windows Native**: Full UTF-8 support across all file I/O and terminal outputs (`safe_box=True`, `sys.stdout.reconfigure`), eliminating Windows `cp1252` encoding pitfalls.
-- **`<think>` Tag Stripping & Robust JSON Extraction**: Seamless compatibility with reasoning models (DeepSeek-R1, Gemma 4, Qwen).
-- **Ensemble Engine**: Evaluates Single Best, Greedy Forward Selection, Voting, and Ridge Stacking. A more complex ensemble is rejected unless it demonstrably outperforms the best single model on identical rows.
-- **Built-in System Diagnostics (`mlagent doctor`)**: Validates Python environment, dependencies, dataset schema, and live LLM round-trip prior to running.
-
----
-
-## Quickstart
-
-### 1. Installation
-
-Clone the repository and set up a Python 3.10+ virtual environment:
-
-```bash
-# Clone the repository
-git clone https://github.com/Gurumurthy30/mlagent.git
-cd mlagent
-
-# Create and activate virtual environment
+```powershell
 python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e .
+```
 
-# Windows (Command Prompt / PowerShell)
-.venv\Scripts\activate
+Linux or macOS:
 
-# Linux / macOS
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
-
-# Install mlagent in editable mode with boost & dev dependencies
-pip install -e ".[boost,dev]"
+pip install -e .
 ```
 
-### 2. Environment Configuration
-
-Copy `.env.example` to `.env`:
-
-```bash
-cp .env.example .env
-```
-
-Configure your LLM provider. `mlagent` supports both local and cloud-hosted Ollama instances:
-
-```env
-# For Local Ollama (default: http://localhost:11434)
-OLLAMA_MODEL=gemma4:31b-cloud
-
-# For Remote / Cloud Ollama
-OLLAMA_BASE_URL=https://ollama.com
-OLLAMA_API_KEY=your_ollama_api_key_here
-OLLAMA_MODEL=gemma4:31b-cloud
-```
-
-*(You can also override the model via `MLAGENT_MODEL=qwen2.5:32b` or `--model` CLI flag).*
-
-### 3. Verify Setup with `mlagent doctor`
-
-Ensure your environment, libraries, and LLM backend are healthy:
-
-```bash
-mlagent doctor path/to/dataset.csv --check-json
-```
-
----
-
-## Usage Guide
-
-### One-Shot Autonomous Run
-
-Run an end-to-end ML exploration on your dataset:
-
-```bash
-mlagent run data/train.csv --target survived --id-col passenger_id --yes --workers 2
-```
-
-Flags:
-- `--target <column>`: Target variable to predict (inferred automatically if omitted).
-- `--id-col <column>`: Row identifier column (excluded from training features).
-- `--test <path>`: Optional test CSV for final submission predictions.
-- `--workers <int>`: Concurrency level for parallel script execution (default: 1).
-- `--yes`, `-y`: Non-interactive mode (auto-approves initial experiment plan).
-- `--max-experiments <int>`: Cap on total experiment hypotheses to try.
-
-### Resuming an Interrupted Run
-
-If an experiment run was halted via `Ctrl+C` or a rate limit, resume exactly where it stopped:
-
-```bash
-mlagent resume data/train.csv
-```
-
-To re-open a completed workspace for additional exploration:
-
-```bash
-mlagent resume data/train.csv --more 5
-```
-
-### Kaggle Public Leaderboard Sync
-
-Record a public leaderboard score to compute the CV/LB gap:
-
-```bash
-mlagent lb data/train.csv --score 0.785
-```
-
-Submit directly to a Kaggle competition via the Kaggle CLI:
-
-```bash
-mlagent lb data/train.csv --submit --kaggle titanic
-```
-
----
-
-## Workspace Directory Structure
-
-All run artifacts, scripts, and logs are kept isolated next to your data:
+Extra libraries for deep learning, audio and vision tasks:
 
 ```
-data/
-├── train.csv
-└── mlagent_train/                     <-- Isolated workspace
-    ├── config.yaml                    # Frozen configuration for this run
-    ├── ledger.json                    # Complete ledger of all hypotheses & scores
-    ├── control.json                   # Deterministic state machine checkpointer
-    ├── folds.json                     # Fixed CV fold split indices
-    ├── holdout.json                   # Fixed holdout split indices
-    ├── mlkit.py                       # Standalone reproducibility library
-    ├── report.md                      # Final Markdown summary & leaderboard
-    ├── submission.csv                 # Final test predictions (if test provided)
-    ├── scripts/                       # Executable Python scripts for each experiment
-    │   ├── e001_baseline.py
-    │   ├── e002_family_size.py
-    │   └── t_e002_optuna.py
-    ├── artifacts/                     # OOF predictions, models, metrics
-    └── logs/                          # Full stdout/stderr logs per run
+pip install -e ".[deep]"        # torch, transformers, timm, sentence-transformers
+pip install -e ".[audio]"       # librosa, soundfile
+pip install -e ".[vision]"      # opencv
 ```
 
----
+**GPU on Windows:** the default `torch` wheel from PyPI is CPU only on Windows. Install the CUDA
+build first, using the command for your CUDA version from https://pytorch.org/get-started/locally,
+and then run `pip install -e ".[deep]"`. To see what the agents will see on your machine:
 
-## Configuration Hierarchy
-
-Configuration settings follow a strict precedence:
-
-$$\text{CLI flags} > \text{Environment variables} > \text{Workspace config.yaml} > \text{Global mlagent.yaml}$$
-
-To generate a sample global config:
-
-```bash
-mlagent config init
+```
+python -m mlagent.environment_probe
 ```
 
-Available keys include:
-- `model`: LLM model name (`gemma4:31b-cloud`, `qwen2.5:32b`, etc.).
-- `seed`: Random seed for reproducibility.
-- `budget.max_experiments`: Maximum number of experiments before stopping.
-- `parallel.workers`: Concurrency limit for execution.
-- `hardware.oom_downgrade`: Enable/disable automatic level degradation on memory failure.
-- `finisher.methods`: Enabled ensemble algorithms (`["single", "greedy", "voting", "stacking"]`).
+If it says `PyTorch: ... CPU only` while you have an NVIDIA GPU, the CUDA build is missing.
 
----
+The agents may also run `pip install` themselves when a library is missing. Every command they
+run is written to `mlagent_workspace/logs/commands.log`.
 
-## Testing
+## Use
 
-The test suite runs with a mocked LLM driver and requires no external API credits:
-
-```bash
-# Run full test suite (23 tests: unit + end-to-end integration)
-pytest -q tests/
+```
+cd path\to\your\ml\project
+mlagent start
 ```
 
-Test coverage includes:
-- Cross-platform UTF-8 file handling and Windows path resilience.
-- `<think>` tag extraction and nested JSON resilience.
-- `to_submission` edge cases and ID column fallback.
-- `mlagent doctor` diagnostic checks.
-- End-to-end LangGraph graph loops, Optuna tuning, and Ensembling.
+It asks two things, in your own words:
 
----
+1. **The task**, for example "Predict which customers cancel next month. Train is train.csv."
+2. **The metrics**, for example "macro F1 mainly, also report AUC". You may list several, or press
+   Enter and let the agents decide.
 
-## License
+After that it needs no help. It prints one line per step. When it finishes it shows where the
+report and the predictions are.
 
-This project is licensed under the Apache 2.0 License.
+- **Ctrl+C** stops safely. Run `mlagent start` again and answer `resume`. An interrupted step is
+  started again from its beginning.
+- If a workspace already exists, it asks `resume` or `fresh`. A fresh start renames the old
+  workspace to `mlagent_workspace_old_<time>`. Nothing is deleted, and your edited `config.yaml`
+  is carried over.
+- `mlagent --version`, `python -m mlagent start` also work.
+
+## What it creates
+
+Everything goes into one folder inside your project. Your own files are never changed.
+
+```
+mlagent_workspace/
+  config.yaml     the only settings you edit
+  memory/         ledger.json (all state), environment.json, progress.md (readable summary)
+  logs/           run.log, llm_calls.jsonl (every prompt and answer), commands.log
+  artifacts/      splits.json, features/, experiment_001/ ..., evaluation/, reviewer/
+  report/         report.md and the final predictions file
+```
+
+## Settings
+
+`config.yaml` is created on the first run:
+
+```yaml
+model:
+  name: gemma4:31b                  # Ollama model tag. It must be pulled already.
+  base_url: http://localhost:11434
+  temperature: 0.2
+  context_length: 16384             # Ollama num_ctx. Higher needs more memory.
+
+compute:
+  use_gpu: auto                     # auto = the ML Lead decides per task | always | never
+
+limits:
+  max_eda_loops: 4                  # most rounds the Data Analyst may run
+  max_experiment_loops: 15          # most rounds of the experiment loop
+  code_timeout_minutes: 30          # time limit for one script run
+```
+
+Everything else (code attempts per task, plateau rules, seed) is a named constant in
+`mlagent/settings.py`. Every agent prompt is told the limits that matter to it.
+
+## The team
+
+Ten agents. Every agent that needs code hands a task to the **Coder**, which writes the script,
+runs it, reads the error and fixes it.
+
+| Agent | Job |
+|---|---|
+| Data Engineer | Opens the folder, reads your words, writes the project brief |
+| Data Analyst | Exploratory data analysis, with a checklist the code tracks |
+| ML Lead | Validation plan, metric, baseline, `splits.json` |
+| Feature Engineer | Input preparation, screens new steps on the fixed splits |
+| Modeler | Trains models, rejects repeated setups |
+| Evaluator | Independent check of every result, hard rules first |
+| Tuner | Bounded hyper-parameter search of the best models |
+| Reviewer | Reads the results and picks the next focus |
+| Submitter | Optional ensemble, delivery checks, `report.md` |
+| Coder | The sub-agent that writes and runs code for the others |
+
+```mermaid
+flowchart TD
+  A([mlagent start]) --> DE[Data Engineer] --> DA[Data Analyst] --> ML[ML Lead] --> SC{stop check}
+  SC -->|start or features| FE[Feature Engineer]
+  SC -->|model| M[Modeler]
+  SC -->|tune| T[Tuner]
+  SC -->|data| DR[Data Analyst again]
+  FE --> M
+  FE -->|nothing kept| R
+  DR --> FE
+  M --> E[Evaluator]
+  T --> E
+  E --> R[Reviewer] --> SC
+  SC -->|stop| S[Submitter] --> Z([report and predictions])
+```
+
+The loop stops for one of these reasons, decided by code and not by the language model: the
+Reviewer finished (only allowed after enough rounds), the target score was reached, three runs
+crashed in a row, the round limit was reached, three rounds in a row had no counted gain, or
+the language model became unavailable. In every case the best approved result so far is
+delivered.
+
+A "counted gain" means a new result beats the best one by more than its noise: the mean of the
+per-split improvements must exceed its standard error (three or more splits), or a small
+relative margin otherwise.
+
+## Tests
+
+```
+pip install -e ".[dev]"
+pytest
+ruff check .
+```
+
+The tests never need Ollama. A scripted fake model answers, a tiny fake Ollama server checks
+the real request format, and the scripts the agents run really execute (pandas, scikit-learn).
+
+## Honest limits
+
+- It has been tested with a scripted language model only. How well your real Ollama model
+  follows the prompts (one python block per answer, valid JSON) is only known from a live run.
+  If a run misbehaves, `logs/llm_calls.jsonl` and `logs/run.log` show exactly what happened.
+- There is no sandbox. The scripts run as you, with your permissions. The agents are told to
+  keep your project folder read only and a small deny-list blocks obviously destructive shell
+  commands (`rm -rf`, `shutdown` and similar), but that is a safety net and not isolation.
+- The automated tests use a tabular project. The agents are written without per-data-type
+  branches, but image, text and audio runs depend on your hardware and on the model writing
+  good code for them.
+- The time limit applies to one script run. The total time of a run is the sum of all of them.

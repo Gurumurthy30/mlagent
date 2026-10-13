@@ -1,39 +1,66 @@
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
 
 [project]
 name = "mlagent"
-version = "0.1.0"
-description = "CLI multi-agent ML engineer (LangGraph + one local/remote LLM)"
-requires-python = ">=3.10"
-dependencies = ["langgraph>=0.2", "pydantic>=2", "pandas", "numpy", "scikit-learn", "rich", "ollama", "pyyaml"]
+dynamic = ["version"]
+readme = "README.md"
+description = "CLI multi-agent system that runs a machine learning project end to end with a local Ollama model."
+requires-python = ">=3.11"
+dependencies = [
+    # Agent engine
+    "langgraph>=1.2,<2",
+    "langchain-ollama>=1.1,<2",
+    "pydantic>=2.14,<3",
+    "pyyaml>=6",
+    "rich>=15",
+    "psutil>=7",
+    # Toolbox for the code the agents write
+    "numpy>=2.0",
+    "pandas>=2.2,<3",
+    "scipy>=1.14",
+    "scikit-learn>=1.5",
+    "lightgbm>=4.5",
+    "xgboost>=3.0",
+    "catboost>=1.2",
+    "optuna>=4",
+    "joblib>=1.4",
+    "matplotlib>=3.9",
+    "pyarrow>=17",
+    "statsmodels>=0.14",
+    "pillow>=11",
+]
 
 [project.optional-dependencies]
-boost = ["lightgbm", "xgboost", "catboost", "optuna"]
-dev = ["pytest", "optuna", "lightgbm"]
+# Deep learning for image, text and speech tasks. On Windows, install torch with the
+# CUDA index first to get GPU support (see README).
+deep = [
+    "torch>=2.5",
+    "torchvision",
+    "torchaudio",
+    "transformers>=4.50,<5",
+    "sentence-transformers>=3",
+    "timm>=1.0",
+]
+audio = ["librosa>=0.10", "soundfile>=0.12"]
+vision = ["opencv-python-headless>=4.10"]
+dev = ["pytest>=8", "ruff>=0.8"]
 
 [project.scripts]
 mlagent = "mlagent.cli:main"
 
-[tool.setuptools.packages.find]
-include = ["mlagent*"]
+[tool.hatch.version]
+path = "mlagent/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mlagent"]
 
 [tool.pytest.ini_options]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-]
+testpaths = ["tests"]
 
 [tool.ruff]
-line-length = 120
-target-version = "py310"
+line-length = 100
 
 [tool.ruff.lint]
-ignore = [
-    "BLE001",  # Catching general Exception is intentional in resilience loops & diagnostics
-    "S110",    # try-except-pass is intentional when ignoring corrupted or non-matching auxiliary files
-    "S112",    # try-except-continue is intentional during column leak check scanning
-    "PLW1510", # subprocess.run without check=True (return codes explicitly inspected)
-    "DTZ005",  # datetime.datetime.now() without tz parameter
-    "RUF100",  # Unused noqa directives across environments
-]
+select = ["E", "F", "I"]

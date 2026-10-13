@@ -1,3 +1,5 @@
-from .cli import main
+"""Lets you run the package with: python -m mlagent start"""
 
-main()
+from mlagent.cli import main
+
+raise SystemExit(main())
