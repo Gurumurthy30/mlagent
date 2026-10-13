@@ -1,4 +1,5 @@
 import json
+from unittest import mock
 
 import pytest
 from fake_llm import FakeLlmClient
@@ -12,6 +13,7 @@ from mlagent.llm_client import (
     LlmUnavailableError,
     build_repair_prompt,
     extract_json_text,
+    is_cloud_direct,
 )
 
 
@@ -29,6 +31,7 @@ def test_extract_json_text_removes_a_code_fence():
     assert extract_json_text('```json\n{"a": 1}\n```') == '{"a": 1}'
     assert extract_json_text('Here it is:\n```\n{"a": 1}\n```\nDone') == '{"a": 1}'
     assert extract_json_text('  {"a": 1}  ') == '{"a": 1}'
+    assert extract_json_text('Here is json: {"a": 1} and more text') == '{"a": 1}'
 
 
 def test_repair_prompt_contains_the_original_prompt_the_answer_and_the_problem():
@@ -99,12 +102,21 @@ def test_a_wrong_field_type_is_also_repaired(workspace):
 
 
 def test_two_invalid_answers_raise_llm_unavailable(workspace):
-    llm_client = FakeLlmClient(["bad", "still bad"], workspace)
+    llm_client = FakeLlmClient(["bad", "still bad", "again bad"], workspace)
 
-    with pytest.raises(LlmUnavailableError, match="did not get valid JSON after 2 tries"):
+    with pytest.raises(LlmUnavailableError, match="did not get valid JSON after 3 tries"):
         llm_client.ask_structured("Reviewer", "decide", ReviewAnswer)
 
-    assert len(read_llm_call_log(workspace)) == 2
+    assert len(read_llm_call_log(workspace)) == 3
+
+
+def test_repair_works_on_second_retry(workspace):
+    llm_client = FakeLlmClient(["bad", "still bad", {"focus": "model", "score": 0.9}], workspace)
+
+    answer = llm_client.ask_structured("Reviewer", "decide", ReviewAnswer)
+
+    assert answer == ReviewAnswer(focus="model", score=0.9)
+    assert len(llm_client.received_prompts) == 3
 
 
 def test_scripted_answer_can_be_a_function_of_the_prompt(workspace):
@@ -192,3 +204,87 @@ def test_ollama_stopping_during_a_run_becomes_llm_unavailable(fake_ollama_server
 
     with pytest.raises(LlmUnavailableError):
         llm_client.ask_text("Modeler", "train")
+
+
+def test_is_cloud_direct():
+    assert is_cloud_direct("https://ollama.com") is True
+    assert is_cloud_direct("http://ollama.com") is True
+    assert is_cloud_direct("http://localhost:11434") is False
+    assert is_cloud_direct("https://ollama.com.example") is False
+
+
+def test_client_headers_contain_authorization_when_api_key_set(monkeypatch, workspace):
+    monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
+    llm_client = build_real_client("https://ollama.com", workspace)
+    client_headers = llm_client.chat_model._client._client.headers
+    assert client_headers.get("authorization") == "Bearer test-key"
+
+
+def test_check_ready_cloud_without_api_key_raises_error(monkeypatch, workspace):
+    monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
+    llm_client = build_real_client("https://ollama.com", workspace)
+    with pytest.raises(LlmUnavailableError, match="OLLAMA_API_KEY"):
+        llm_client.check_ready()
+
+
+def test_cloud_host_does_not_send_format_argument(workspace):
+    llm_client = build_real_client("https://ollama.com", workspace)
+    fake_chat = mock.MagicMock()
+    fake_chat.invoke.return_value = mock.Mock(content='{"focus": "model", "score": 0.8}')
+    llm_client.chat_model = fake_chat
+
+    answer = llm_client.ask_structured("Reviewer", "decide", ReviewAnswer)
+
+    assert answer == ReviewAnswer(focus="model", score=0.8)
+    assert fake_chat.invoke.call_count == 1
+    _, kwargs = fake_chat.invoke.call_args
+    assert "format" not in kwargs
+
+
+def test_status_429_retries_and_succeeds(workspace):
+    server = FakeOllamaServer(
+        installed_model_names=["gemma4:31b"],
+        chat_status_codes=[429, 200],
+        chat_reply_text="retry worked",
+    )
+    server.start()
+    try:
+        with mock.patch("time.sleep") as mock_sleep:
+            llm_client = build_real_client(server.base_url, workspace)
+            answer = llm_client.ask_text("Modeler", "train")
+            assert answer == "retry worked"
+            assert mock_sleep.call_count == 1
+    finally:
+        server.stop()
+
+
+def test_status_429_on_every_try_raises_rate_limit_error(workspace):
+    server = FakeOllamaServer(installed_model_names=["gemma4:31b"], chat_status_code=429)
+    server.start()
+    try:
+        with mock.patch("time.sleep") as mock_sleep:
+            llm_client = build_real_client(server.base_url, workspace)
+            with pytest.raises(
+                LlmUnavailableError,
+                match="Ollama said 429: a rate or usage limit was reached",
+            ):
+                llm_client.ask_text("Modeler", "train")
+            assert mock_sleep.call_count == 3
+    finally:
+        server.stop()
+
+
+def test_status_401_raises_immediately_without_retry(workspace):
+    server = FakeOllamaServer(installed_model_names=["gemma4:31b"], chat_status_code=401)
+    server.start()
+    try:
+        with mock.patch("time.sleep") as mock_sleep:
+            llm_client = build_real_client(server.base_url, workspace)
+            with pytest.raises(
+                LlmUnavailableError,
+                match="Ollama said 401: the API key is missing or wrong",
+            ):
+                llm_client.ask_text("Modeler", "train")
+            assert mock_sleep.call_count == 0
+    finally:
+        server.stop()

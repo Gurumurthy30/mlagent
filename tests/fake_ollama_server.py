@@ -15,10 +15,12 @@ class FakeOllamaServer:
         installed_model_names: list[str],
         chat_reply_text: str = "hello",
         chat_status_code: int = 200,
+        chat_status_codes: list[int] | None = None,
     ) -> None:
         self.installed_model_names = installed_model_names
         self.chat_reply_text = chat_reply_text
         self.chat_status_code = chat_status_code
+        self.chat_status_codes = list(chat_status_codes) if chat_status_codes else []
         self.chat_requests: list[dict] = []
         self.http_server = ThreadingHTTPServer(("127.0.0.1", 0), self._build_handler())
         self.server_thread = threading.Thread(target=self.http_server.serve_forever, daemon=True)
@@ -61,8 +63,16 @@ class FakeOllamaServer:
                 content_length = int(self.headers.get("Content-Length", 0))
                 request_body = json.loads(self.rfile.read(content_length))
                 fake_server.chat_requests.append(request_body)
-                if fake_server.chat_status_code != 200:
-                    self._send_json(fake_server.chat_status_code, {"error": "model not found"})
+                current_status = (
+                    fake_server.chat_status_codes.pop(0)
+                    if fake_server.chat_status_codes
+                    else fake_server.chat_status_code
+                )
+                if current_status != 200:
+                    error_message = (
+                        "model not found" if current_status == 404 else f"status {current_status}"
+                    )
+                    self._send_json(current_status, {"error": error_message})
                     return
                 self._send_json(
                     200,

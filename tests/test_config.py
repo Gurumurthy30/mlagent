@@ -74,3 +74,26 @@ def test_use_gpu_choices_including_yaml_booleans(tmp_path, written_value, expect
     config_path.write_text(f"compute:\n  use_gpu: {written_value}\n", encoding="utf-8")
 
     assert load_config(config_path).compute.use_gpu == expected_value
+
+
+def test_base_url_rejects_empty_and_no_scheme(tmp_path):
+    config_path = tmp_path / "config.yaml"
+
+    config_path.write_text("model:\n  base_url: ''\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="base_url must start with http:// or https://"):
+        load_config(config_path)
+
+    config_path.write_text("model:\n  base_url: localhost:11434\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="base_url must start with http:// or https://"):
+        load_config(config_path)
+
+
+def test_base_url_strips_spaces_and_trailing_slashes(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("model:\n  base_url: '  http://localhost:11434/  '\n", encoding="utf-8")
+
+    config = load_config(config_path)
+    assert config.model.base_url == "http://localhost:11434"
+
+    config_path.write_text("model:\n  base_url: 'https://ollama.com/'\n", encoding="utf-8")
+    assert load_config(config_path).model.base_url == "https://ollama.com"

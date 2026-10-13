@@ -91,7 +91,7 @@ def test_the_plan_prompt_has_the_brief_the_eda_hints_and_the_limits(make_agent_c
     assert "macro F1 mainly" in plan_prompt
     assert "stratified_kfold" in plan_prompt and "repeated_seeds" in plan_prompt
     assert "Time limit for one script run: 30 minutes" in plan_prompt
-    assert "up to 5 things most likely to go wrong" in plan_prompt
+    assert "risks: up to 5 items" in plan_prompt
 
 
 def test_the_splits_task_names_the_scheme_the_path_the_hints_and_the_format(
@@ -188,7 +188,13 @@ def test_risks_and_playbook_are_limited_and_the_target_score_is_kept(make_agent_
 
 
 def test_a_failed_splits_script_stops_the_run_with_a_clear_message(make_agent_context):
-    agent_context = make_agent_context([plan_draft(), *two_failed_coder_attempts("disk full")])
+    agent_context = make_agent_context(
+        [
+            plan_draft(),
+            *two_failed_coder_attempts("disk full"),
+            *two_failed_coder_attempts("disk full"),
+        ]
+    )
 
     with pytest.raises(AgentFailedError, match="could not create the validation splits"):
         run_ml_lead(ledger_with_eda(), agent_context)
@@ -196,10 +202,32 @@ def test_a_failed_splits_script_stops_the_run_with_a_clear_message(make_agent_co
 
 def test_an_unusable_splits_file_stops_the_run(make_agent_context, workspace):
     broken_splits = json.dumps({"scheme": "kfold", "n_splits": 2, "example_ids": [0, 1]})
-    agent_context = make_agent_context([plan_draft(), splits_script(workspace, broken_splits)])
+    agent_context = make_agent_context(
+        [
+            plan_draft(),
+            splits_script(workspace, broken_splits),
+            splits_script(workspace, broken_splits),
+        ]
+    )
 
     with pytest.raises(AgentFailedError, match="splits file is not usable"):
         run_ml_lead(ledger_with_eda(), agent_context)
+
+
+def test_splits_script_fails_on_first_try_and_succeeds_on_second_try(make_agent_context, workspace):
+    agent_context = make_agent_context(
+        [plan_draft(), *two_failed_coder_attempts("first try error"), splits_script(workspace)]
+    )
+
+    plan = run_ml_lead(ledger_with_eda(), agent_context)
+
+    assert plan.splits_path == str(workspace.splits_path)
+    assert workspace.splits_path.exists()
+    coder_prompts = [
+        p for p in agent_context.llm_client.received_prompts if "TASK FROM THE ML Lead" in p
+    ]
+    assert len(coder_prompts) == 3
+    assert "A first attempt failed with: RuntimeError: first try error" in coder_prompts[-1]
 
 
 def test_the_input_ledger_is_not_changed(make_agent_context, workspace):

@@ -19,7 +19,7 @@ from mlagent.agents.base import (
     display_name,
     render_prompt,
 )
-from mlagent.agents.coder import run_coder
+from mlagent.agents.coder import last_error_line, run_coder
 from mlagent.digest import describe_brief, trim_text
 from mlagent.events import EventType
 from mlagent.scoring import all_finite, is_counted_gain, score_improvement
@@ -39,6 +39,17 @@ AGENT_NAME = display_name(AGENT_KEY)
 FEATURES_RESULT_TAG = "FEATURES"
 SCREEN_RESULT_TAG = "SCREEN"
 SCREENING_FOLDER_NAME = "screening"
+
+FEATURES_RESULT_KEYS_TEXT = """\
+- "module_path": the path of the features file (this script)
+- "functions": list of the function names other scripts can import
+- "description": one short sentence about what the file does"""
+
+SCREEN_RESULT_KEYS_TEXT = """\
+- "baseline_scores": list of numbers, the primary metric of the current setup on each \
+validation split
+- "candidates": list of objects {"name": candidate name, "scores": list of numbers in split \
+order, or null when it failed, "error": short text or ""}"""
 
 FEATURES_FILE_RULES_TEXT = """\
 Your script IS the features file. It defines the functions other scripts will import. Under \
@@ -237,9 +248,11 @@ def build_basic_preparation(ledger: Ledger, agent_context: AgentContext) -> Feat
         agent_context=agent_context,
     )
     if not coder_result.succeeded:
+        error_line = last_error_line(coder_result.error_text)
+        log_path = agent_context.workspace.commands_log_path
         raise AgentFailedError(
             f"The Feature Engineer could not build the basic input preparation: "
-            f"{coder_result.error_text}"
+            f"{error_line}. Full log: {log_path}"
         )
     basic_record = FeatureRecord(
         feature_id=ledger.next_feature_id(),

@@ -152,7 +152,7 @@ def test_the_prompts_carry_the_source_the_candidates_and_only_the_kept_ones(
     propose_prompt, screening_prompt, version_prompt = agent_context.llm_client.received_prompts
     assert "CURRENT FEATURES FILE (version 1)" in propose_prompt
     assert "def prepare_inputs(table)" in propose_prompt
-    assert "Never repeat anything listed under FEATURES TRIED" in propose_prompt
+    assert "Never repeat an idea" in propose_prompt
     assert "basic_preparation" in propose_prompt
     assert "def tenure_bucket" in screening_prompt and "def noisy_ratio" in screening_prompt
     assert str(workspace.splits_path) in screening_prompt

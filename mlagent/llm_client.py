@@ -1,4 +1,4 @@
-"""Talks to the local Ollama model. Every agent asks its questions through this one class.
+"""Talks to the Ollama model. Every agent asks questions through this class.
 
 Two ways to ask:
   ask_text        returns the model's answer as plain text
@@ -7,10 +7,13 @@ Two ways to ask:
 Every call is written to logs/llm_calls.jsonl.
 """
 
+import json
+import os
 import re
 import time
 from datetime import datetime
 from typing import TypeVar
+from urllib.parse import urlparse
 
 import httpx
 import ollama
@@ -20,7 +23,12 @@ from pydantic import BaseModel, ValidationError
 from mlagent.config import ModelConfig
 from mlagent.events import EventBus, EventType
 from mlagent.memory import Workspace, append_json_line
-from mlagent.settings import LLM_CALL_TIMEOUT_SECONDS, LLM_REPAIR_RETRIES
+from mlagent.settings import (
+    LLM_CALL_TIMEOUT_SECONDS,
+    LLM_REPAIR_RETRIES,
+    RETRY_WAIT_SECONDS,
+    RETRYABLE_STATUS_CODES,
+)
 
 AnswerModel = TypeVar("AnswerModel", bound=BaseModel)
 
@@ -31,11 +39,19 @@ class LlmUnavailableError(Exception):
     """Raised when Ollama cannot be used: not running, model missing, or no valid answer."""
 
 
+def is_cloud_direct(base_url: str) -> bool:
+    return urlparse(base_url).hostname == "ollama.com"
+
+
 def extract_json_text(response_text: str) -> str:
-    """Remove a ```json fence when the model added one around its answer."""
+    """Extract JSON from a code fence or surrounding text."""
     fenced_match = re.search(r"```(?:json)?\s*(.*?)```", response_text, re.DOTALL)
-    json_text = fenced_match.group(1) if fenced_match else response_text
-    return json_text.strip()
+    candidate_text = fenced_match.group(1) if fenced_match else response_text
+    start_brace = candidate_text.find("{")
+    end_brace = candidate_text.rfind("}")
+    if start_brace != -1 and end_brace != -1 and start_brace < end_brace:
+        return candidate_text[start_brace : end_brace + 1].strip()
+    return candidate_text.strip()
 
 
 def build_repair_prompt(original_prompt: str, previous_answer: str, problem: str) -> str:
@@ -64,12 +80,21 @@ class LlmClient:
         )
 
     def check_ready(self) -> None:
-        """Make sure Ollama is running and the configured model is pulled."""
+        """Make sure Ollama is running and the configured model is available."""
         model_name = self.model_config.name
         base_url = self.model_config.base_url
+        if is_cloud_direct(base_url) and not os.getenv("OLLAMA_API_KEY"):
+            raise LlmUnavailableError(
+                "Cloud mode needs OLLAMA_API_KEY from https://ollama.com/settings/keys, "
+                "and a new terminal is needed after setx."
+            )
         try:
             installed_models = ollama.Client(host=base_url).list().models
-        except (ConnectionError, httpx.HTTPError, ollama.ResponseError) as error:
+        except (ConnectionError, httpx.HTTPError, ollama.ResponseError, Exception) as error:
+            if is_cloud_direct(base_url):
+                raise LlmUnavailableError(
+                    f"Cannot reach Ollama Cloud at {base_url}: {error}"
+                ) from error
             raise LlmUnavailableError(
                 f"Cannot reach Ollama at {base_url}. Start Ollama and run again. ({error})"
             ) from error
@@ -77,6 +102,12 @@ class LlmClient:
         installed_names = {installed.model for installed in installed_models}
         wanted_name = model_name if ":" in model_name else f"{model_name}:latest"
         if wanted_name not in installed_names:
+            if is_cloud_direct(base_url):
+                raise LlmUnavailableError(
+                    f"Model '{model_name}' is not available on Ollama Cloud. The name must "
+                    "come from https://ollama.com/api/tags, for example gemma4:31b without "
+                    "a -cloud suffix."
+                )
             raise LlmUnavailableError(
                 f"Model '{model_name}' is not pulled in Ollama. Run: ollama pull {model_name}"
             )
@@ -88,7 +119,12 @@ class LlmClient:
         self, agent_name: str, prompt: str, answer_model: type[AnswerModel]
     ) -> AnswerModel:
         json_schema = answer_model.model_json_schema()
-        current_prompt = prompt
+        schema_note = (
+            "\n\nAnswer with only one JSON object and no other text. It must follow this JSON "
+            f"schema:\n{json.dumps(json_schema)}"
+        )
+        base_prompt = prompt + schema_note
+        current_prompt = base_prompt
         problem = ""
         total_tries = LLM_REPAIR_RETRIES + 1
         for _ in range(total_tries):
@@ -97,7 +133,7 @@ class LlmClient:
                 return answer_model.model_validate_json(extract_json_text(response_text))
             except ValidationError as validation_error:
                 problem = str(validation_error)
-                current_prompt = build_repair_prompt(prompt, response_text, problem)
+                current_prompt = build_repair_prompt(base_prompt, response_text, problem)
                 self.event_bus.emit(
                     EventType.WARNING, agent_name, "the model's JSON was not valid, asking again"
                 )
@@ -108,7 +144,8 @@ class LlmClient:
 
     def _call_model(self, prompt: str, json_schema: dict | None) -> str:
         """The only method that talks to Ollama. Tests replace it with scripted answers."""
-        keyword_arguments = {"format": json_schema} if json_schema else {}
+        send_schema = json_schema is not None and not is_cloud_direct(self.model_config.base_url)
+        keyword_arguments = {"format": json_schema} if send_schema else {}
         answer = self.chat_model.invoke(prompt, **keyword_arguments)
         return answer.content
 
@@ -122,10 +159,33 @@ class LlmClient:
         response_text = ""
         error_text = ""
         try:
-            response_text = self._call_model(prompt, json_schema)
-        except (ConnectionError, httpx.HTTPError, ollama.ResponseError) as error:
-            error_text = str(error)
-            raise LlmUnavailableError(f"Ollama call failed: {error}") from error
+            max_attempts = len(RETRY_WAIT_SECONDS) + 1
+            for attempt in range(max_attempts):
+                try:
+                    response_text = self._call_model(prompt, json_schema)
+                    error_text = ""
+                    break
+                except ollama.ResponseError as error:
+                    error_text = str(error)
+                    if error.status_code in RETRYABLE_STATUS_CODES and attempt < len(
+                        RETRY_WAIT_SECONDS
+                    ):
+                        time.sleep(RETRY_WAIT_SECONDS[attempt])
+                        continue
+                    if error.status_code == 401:
+                        raise LlmUnavailableError(
+                            "Ollama said 401: the API key is missing or wrong. "
+                            "Set OLLAMA_API_KEY and open a new terminal."
+                        ) from error
+                    if error.status_code == 429:
+                        raise LlmUnavailableError(
+                            "Ollama said 429: a rate or usage limit was reached. "
+                            "Wait, or check https://ollama.com/settings/usage."
+                        ) from error
+                    raise LlmUnavailableError(f"Ollama call failed: {error}") from error
+                except (ConnectionError, httpx.HTTPError) as error:
+                    error_text = str(error)
+                    raise LlmUnavailableError(f"Ollama call failed: {error}") from error
         finally:
             seconds = round(time.monotonic() - started_at, 1)
             append_json_line(

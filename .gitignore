@@ -26,8 +26,9 @@ ENV/
 .env.local
 !.env.example
 
-# other things
+# Other things
 notebook/
 sample_data/
 docs/
 .ruff_cache/
+mlagent_workspace*/

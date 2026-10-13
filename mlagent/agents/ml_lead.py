@@ -13,7 +13,7 @@ from mlagent.agents.base import (
     display_name,
     render_prompt,
 )
-from mlagent.agents.coder import run_coder
+from mlagent.agents.coder import last_error_line, run_coder
 from mlagent.digest import describe_brief, trim_text
 from mlagent.events import EventType
 from mlagent.script_contract import SPLITS_FORMAT_TEXT, check_splits_file
@@ -31,6 +31,12 @@ AGENT_KEY = "ml_lead"
 AGENT_NAME = display_name(AGENT_KEY)
 RESULT_TAG = "SPLITS"
 MAX_RISKS = 5
+
+SPLITS_RESULT_KEYS_TEXT = """\
+- "splits_path": the path you saved the file to
+- "n_splits": integer
+- "n_examples": number of entries in example_ids (0 when you wrote seeds)
+- "n_holdout": number of examples with fold -1"""
 
 PLAN_PROMPT = """\
 You are the ML Lead of an ML team. You are the senior who decides how the team measures \
@@ -134,38 +140,96 @@ def build_plan(draft: PlanDraft, ledger: Ledger, agent_context: AgentContext) ->
     )
 
 
-def build_splits_task(plan: ExperimentPlan, ledger: Ledger, agent_context: AgentContext) -> str:
+def build_splits_task(
+    plan: ExperimentPlan,
+    ledger: Ledger,
+    agent_context: AgentContext,
+    previous_error: str = "",
+) -> str:
     hint_text = "; ".join(ledger.eda.validation_hints) or "none"
+    rules = [
+        f"- Project folder (read only): {agent_context.workspace.project_folder}",
+        f"- Save the file to exactly this path: {agent_context.workspace.splits_path}",
+        f"- Never fully load a file larger than {BIG_FILE_MB} MB. Read only what you need "
+        "to list the examples. On big data use hashing or exact matching for duplicates and "
+        "say in the result what you skipped.",
+        "- List every training example exactly once in example_ids, in the order the training "
+        "data lists them (row order for tables, sorted file names for folders). Use the same "
+        "ids the training data uses.",
+        "- Print the number of examples you found before splitting. It must match the number of "
+        "rows (or files) of the training data. If it is 1 or far too small, you read the data "
+        "wrongly: fix that first.",
+        "- Only when the EDA structure above names duplicates or groups: keep rows with identical "
+        "content (ignoring the id column) together, in the holdout or in one fold. Otherwise every "
+        "example is independent: do not build groups and do not hash rows.",
+        f"- Use {DEFAULT_SPLIT_COUNT} validation splits for the kfold schemes, fewer when the "
+        "data is tiny, but keep at least 30 examples in every validation split. For "
+        "single_split use one validation split of about 20 percent.",
+        f"- When there are at least {MIN_EXAMPLES_FOR_HOLDOUT} examples, hold out about "
+        f"{int(HOLDOUT_FRACTION * 100)} percent of them (fold -1) first. With fewer examples "
+        "hold out nothing.",
+        "- The holdout follows the scheme: random for kfold, stratified on the target for "
+        "stratified_kfold, whole groups for group_kfold, the latest examples in time order "
+        "for time_split. Make the validation splits from the remaining examples with the same "
+        "rule.",
+        "- After saving, check the file: every example appears once, the holdout and folds do "
+        "not overlap, no duplicate group named in the EDA crosses a boundary, and for time_split "
+        "every validation example is later than its training examples. Fix it if a check fails.",
+    ]
+    if previous_error:
+        rules.append(
+            f"- A first attempt failed with: {previous_error}. Write the simplest correct "
+            "version: keep the scheme but drop every optional rule (duplicate groups and "
+            "extra checks), and make sure the file follows the format below."
+        )
+    rules_text = "\n".join(rules)
     return (
         "Create the validation splits for this project and save them as one JSON file.\n"
         f"Scheme: {plan.validation_scheme}. Reason: {plan.validation_reason}\n"
         f"Seed: {RANDOM_SEED}. Structure found in the EDA: {hint_text}\n\n"
         f"{describe_brief(ledger)}\n\n"
-        "Rules:\n"
-        f"- Project folder (read only): {agent_context.workspace.project_folder}\n"
-        f"- Save the file to exactly this path: {agent_context.workspace.splits_path}\n"
-        f"- Never fully load a file larger than {BIG_FILE_MB} MB. Read only what you need "
-        "to list the examples. On big data use hashing or exact matching for duplicates and "
-        "say in the result what you skipped.\n"
-        "- List every training example exactly once in example_ids, in the order the training "
-        "data lists them (row order for tables, sorted file names for folders). Use the same "
-        "ids the training data uses.\n"
-        "- Examples with identical content (same row values, same file bytes, same text) are "
-        "one unit. Keep each unit together, in the holdout or in one fold, never both.\n"
-        f"- Use {DEFAULT_SPLIT_COUNT} validation splits for the kfold schemes, fewer when the "
-        "data is tiny, but keep at least 30 examples in every validation split. For "
-        "single_split use one validation split of about 20 percent.\n"
-        f"- When there are at least {MIN_EXAMPLES_FOR_HOLDOUT} examples, hold out about "
-        f"{int(HOLDOUT_FRACTION * 100)} percent of them (fold -1) first. With fewer examples "
-        "hold out nothing.\n"
-        "- The holdout follows the scheme: random for kfold, stratified on the target for "
-        "stratified_kfold, whole groups for group_kfold, the latest examples in time order "
-        "for time_split. Make the validation splits from the remaining examples with the same "
-        "rule.\n"
-        "- After saving, check the file: every example appears once, the holdout and folds do "
-        "not overlap, no group or duplicate unit crosses a boundary, and for time_split every "
-        "validation example is later than its training examples. Fix it if a check fails.\n\n"
+        f"Rules:\n{rules_text}\n\n"
         f"{SPLITS_FORMAT_TEXT}"
+    )
+
+
+MAX_SPLITS_TRIES = 2
+
+
+def create_splits_file(
+    plan: ExperimentPlan, planned_ledger: Ledger, agent_context: AgentContext
+) -> None:
+    previous_error = ""
+    for try_number in range(1, MAX_SPLITS_TRIES + 1):
+        task_text = build_splits_task(plan, planned_ledger, agent_context, previous_error)
+        coder_result = run_coder(
+            task_text=task_text,
+            result_tag=RESULT_TAG,
+            result_keys_text=SPLITS_RESULT_KEYS_TEXT,
+            working_folder=agent_context.workspace.artifacts_folder / AGENT_KEY,
+            script_name="make_splits.py",
+            caller_key=AGENT_KEY,
+            ledger=planned_ledger,
+            agent_context=agent_context,
+        )
+        if coder_result.succeeded:
+            problems = check_splits_file(agent_context.workspace.splits_path)
+            if problems:
+                problems = ["splits file is not usable: " + " ".join(problems)]
+        else:
+            problems = [last_error_line(coder_result.error_text)]
+        if not problems:
+            return
+        previous_error = " ".join(problems)
+        agent_context.event_bus.emit(
+            EventType.WARNING,
+            AGENT_NAME,
+            f"splits try {try_number} failed: {previous_error}",
+        )
+    log_path = agent_context.workspace.commands_log_path
+    raise AgentFailedError(
+        f"The ML Lead could not create the validation splits: {previous_error}. "
+        f"Full log: {log_path}"
     )
 
 
@@ -187,23 +251,7 @@ def run_ml_lead(ledger: Ledger, agent_context: AgentContext) -> ExperimentPlan:
 
     planned_ledger = ledger.model_copy(deep=True)
     planned_ledger.plan = plan
-    coder_result = run_coder(
-        task_text=build_splits_task(plan, planned_ledger, agent_context),
-        result_tag=RESULT_TAG,
-        result_keys_text=SPLITS_RESULT_KEYS_TEXT,
-        working_folder=agent_context.workspace.artifacts_folder / AGENT_KEY,
-        script_name="make_splits.py",
-        caller_key=AGENT_KEY,
-        ledger=planned_ledger,
-        agent_context=agent_context,
-    )
-    if not coder_result.succeeded:
-        raise AgentFailedError(
-            f"The ML Lead could not create the validation splits: {coder_result.error_text}"
-        )
-    problems = check_splits_file(agent_context.workspace.splits_path)
-    if problems:
-        raise AgentFailedError("The splits file is not usable: " + " ".join(problems))
+    create_splits_file(plan, planned_ledger, agent_context)
 
     plan.splits_path = str(agent_context.workspace.splits_path)
     event_bus.emit(EventType.AGENT_FINISHED, AGENT_NAME, "plan and splits are ready")

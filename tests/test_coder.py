@@ -70,7 +70,7 @@ def test_the_prompt_tells_the_coder_its_task_limits_and_result_format(
     assert "Time limit for one script run: 30 minutes" in prompt
     assert "<RESULT>JSON</RESULT>" in prompt
     assert '- "score": float, the validation score' in prompt
-    assert "use the random seed 42" in prompt
+    assert "the random seed 42" in prompt
     assert "You have 3 lookups left" in prompt
     assert "(nothing in memory yet)" in prompt
     assert "{" not in prompt.replace("{}", "")

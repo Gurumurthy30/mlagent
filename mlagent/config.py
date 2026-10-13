@@ -10,8 +10,8 @@ DEFAULT_CONFIG_TEXT = """\
 # mlagent settings. Edit and run `mlagent start` again.
 
 model:
-  name: gemma4:31b                  # Ollama model tag. It must be pulled already.
-  base_url: http://localhost:11434
+  name: gemma4:31b
+  base_url: https://ollama.com
   temperature: 0.2
   context_length: 16384             # Ollama num_ctx. Higher needs more memory.
 
@@ -33,9 +33,17 @@ class ModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = "gemma4:31b"
-    base_url: str = "http://localhost:11434"
+    base_url: str = "https://ollama.com"
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     context_length: int = Field(default=16384, ge=2048)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        url = value.strip().rstrip("/")
+        if not (url.startswith("http://") or url.startswith("https://")):
+            raise ValueError("base_url must start with http:// or https://")
+        return url
 
 
 class ComputeConfig(BaseModel):

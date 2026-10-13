@@ -55,7 +55,7 @@ def ask_required_text(ui: ConsoleUI, question: str) -> str:
 
 def show_final_summary(ui: ConsoleUI, ledger: Ledger, workspace: Workspace) -> None:
     if ledger.status == "failed":
-        ui.show_message(f"The run failed: {ledger.error_message}", style="bold red")
+        ui.show_message("The run failed.", style="bold red")
     else:
         ui.show_message(f"Finished. Stop reason: {ledger.stop_reason}.", style="bold green")
         if ledger.error_message:

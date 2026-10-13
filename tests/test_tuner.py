@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from scripted_answers import two_failed_coder_attempts
 
@@ -107,7 +109,7 @@ def test_tuned_runs_get_new_ids_the_best_parameters_and_the_round(make_agent_con
     assert runs[0].score_mean == pytest.approx(0.84)
     assert runs[0].description == 'tuned lightgbm {"depth": 8}'
     assert not any(run.crashed for run in runs)
-    assert runs[0].script_path.endswith("experiment_003/tune_model.py")
+    assert Path(runs[0].script_path).parts[-2:] == ("experiment_003", "tune_model.py")
     assert (workspace.artifacts_folder / "experiment_004" / "tune_model.py").exists()
 
 
