@@ -12,21 +12,34 @@ not. The agents are told what the task is in your own words, and they write the 
 
 ## Requirements
 
-- Python 3.11 or newer
-- Ollama running, with the model from `config.yaml` already pulled (default `gemma4:31b`)
-- A machine that can run the code the agents write. Image, text and audio tasks want a GPU.
+- Python 3.11 or newer (Python 3.12 tested and recommended)
+- Ollama running locally (or remote endpoint), with the model from `config.yaml` already pulled (default `gemma4:31b`)
+- A machine that can run the code the agents write. Image, text and audio tasks benefit from a GPU.
 
 ## Install
 
-Windows (PowerShell):
+### Windows (PowerShell)
+
+If PowerShell blocks script execution (`UnauthorizedAccess`), set the process execution policy first:
 
 ```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 python -m venv .venv
-.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -e .
 ```
 
-Linux or macOS:
+### Windows (Command Prompt - cmd.exe)
+
+```cmd
+python -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+pip install -e .
+```
+
+### Linux or macOS
 
 ```bash
 python3 -m venv .venv
@@ -34,49 +47,73 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-Extra libraries for deep learning, audio and vision tasks:
+### Extra Dependencies
 
-```
+Extra libraries for deep learning, audio, vision, and development:
+
+```powershell
 pip install -e ".[deep]"        # torch, transformers, timm, sentence-transformers
 pip install -e ".[audio]"       # librosa, soundfile
-pip install -e ".[vision]"      # opencv
+pip install -e ".[vision]"      # opencv-python
+pip install -e ".[dev]"         # pytest, ruff, black
 ```
 
-**GPU on Windows:** the default `torch` wheel from PyPI is CPU only on Windows. Install the CUDA
-build first, using the command for your CUDA version from https://pytorch.org/get-started/locally,
-and then run `pip install -e ".[deep]"`. To see what the agents will see on your machine:
+### GPU Support on Windows (PyTorch CUDA)
 
+The default `torch` wheel on PyPI is CPU-only on Windows. For NVIDIA GPU acceleration, install the CUDA build first before running `pip install -e ".[deep]"`:
+
+```powershell
+# Example for CUDA 12.4 (see https://pytorch.org/get-started/locally for other versions)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 ```
+
+Verify your Windows environment and GPU detection at any time:
+
+```powershell
 python -m mlagent.environment_probe
 ```
 
-If it says `PyTorch: ... CPU only` while you have an NVIDIA GPU, the CUDA build is missing.
+If it says `PyTorch: ... CPU only` while an NVIDIA GPU is available, the CUDA build is missing.
 
-The agents may also run `pip install` themselves when a library is missing. Every command they
-run is written to `mlagent_workspace/logs/commands.log`.
+### Ollama on Windows
+
+1. Download and install [Ollama for Windows](https://ollama.com/download/windows). Ollama runs as a background service at `http://localhost:11434`.
+2. Open PowerShell and pull the model configured in `config.yaml`:
+   ```powershell
+   ollama pull gemma4:31b
+   ```
+3. Test connectivity in PowerShell:
+   ```powershell
+   Invoke-RestMethod http://localhost:11434/api/tags
+   ```
+
+The agents may also run `pip install` automatically in your environment when a library is missing. Every command they run is written to `mlagent_workspace/logs/commands.log`.
 
 ## Use
 
-```
-cd path\to\your\ml\project
+```powershell
+cd C:\path\to\your\ml\project
 mlagent start
+```
+
+*Note on Windows:* If the `mlagent` executable is not in your current shell `PATH`, invoke the module directly:
+
+```powershell
+python -m mlagent.cli start
+# or:
+python -m mlagent start
 ```
 
 It asks two things, in your own words:
 
-1. **The task**, for example "Predict which customers cancel next month. Train is train.csv."
-2. **The metrics**, for example "macro F1 mainly, also report AUC". You may list several, or press
-   Enter and let the agents decide.
+1. **The task**, for example: `"Predict which customers cancel next month. Train is train.csv, test is test.csv."`
+2. **The metrics**, for example: `"macro F1 mainly, also report AUC"`. You may list several, or press Enter and let the agents decide.
 
-After that it needs no help. It prints one line per step. When it finishes it shows where the
-report and the predictions are.
+After that it runs autonomously. It prints one line per step. When it finishes it shows where the report and the predictions are.
 
-- **Ctrl+C** stops safely. Run `mlagent start` again and answer `resume`. An interrupted step is
-  started again from its beginning.
-- If a workspace already exists, it asks `resume` or `fresh`. A fresh start renames the old
-  workspace to `mlagent_workspace_old_<time>`. Nothing is deleted, and your edited `config.yaml`
-  is carried over.
-- `mlagent --version`, `python -m mlagent start` also work.
+- **Ctrl+C** stops safely. Run `mlagent start` again and answer `resume`. An interrupted step is resumed cleanly from its beginning.
+- If a workspace already exists, it asks `resume` or `fresh`. A fresh start renames the old workspace to `mlagent_workspace_old_<time>`. Nothing is deleted, and your edited `config.yaml` is carried over.
+- `mlagent --version` displays version information.
 
 ## What it creates
 

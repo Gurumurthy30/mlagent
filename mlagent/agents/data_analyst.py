@@ -45,18 +45,23 @@ DEFAULT_CHECKLIST = [
     "train versus test differences",
     "duplicates and groups",
     "leakage candidates",
+    "structure that decides a fair split (groups, time order, sources)",
+    "quick signal of the inputs against the target",
+    "size and format of the inputs (shapes, lengths, ranges)",
 ]
 
 RESULT_KEYS_TEXT = """\
-- "answers": list with one object per question: {"question": the question text, "result": a \
-short factual text with the key numbers or a compact table, at most 800 characters. Say when the \
-result comes from a sample and how big the sample was}
+- "answers": list with one object per question, in the order of the questions: {"question": the \
+question text, "result": a short factual text with the key numbers or a compact table, at most \
+800 characters. Say when the result comes from a sample and how big the sample was. When the \
+question could not be answered, write "not answered: " and the reason}
 - "problems": list of strings for anything that could not be computed, with the reason"""
 
 CHECKLIST_PROMPT = """\
 You are the Data Analyst of an ML team. Before you explore the data you write your coverage \
 checklist: the things that must be checked before anyone builds a model. The team cannot move \
-on until every item is covered, so every item must be worth checking and checkable by a script.
+on until every item is covered or the exploration budget ends, so every item must be worth \
+checking and checkable by a script.
 
 {run_rules}
 
@@ -66,7 +71,7 @@ WHAT THE TEAM KNOWS:
 First work out from the task and the project files what kind of problem this is: the data type \
 (tables, images, text, audio, video, time series, graphs, or a mix), what is predicted (a class, \
 a number, a sequence, a ranking, clusters, or nothing), and how the result is scored. Then write \
-8 to 12 checklist items for exactly this problem.
+8 to 12 checklist items for exactly this problem, the most important first.
 
 Cover these areas, in the words of this data. Skip an area only if it truly cannot matter here:
 - the target or labels: distribution, imbalance, noise, rare or unseen values
@@ -80,8 +85,11 @@ Cover these areas, in the words of this data. Skip an area only if it truly cann
 - anything the project documents claim that the data must be checked against
 
 Rules:
-- Each item is one short phrase that one script can answer. No explanations.
-- No duplicates and no vague items such as "explore the data".
+- Each item is one short phrase that one script can answer. No explanations. Name the file or \
+column when the brief gives it.
+- Good: "share of train rows whose customer_id appears more than once". Good: "clip duration \
+and silent clips per class". Bad: "explore the data". Bad: "check data quality".
+- No duplicates and no vague items.
 - Data checking only. Do not list modeling or training steps.
 Return JSON: items (list of strings)."""
 
@@ -98,27 +106,32 @@ WHAT THE TEAM KNOWS (task, files, findings so far):
 CHECKLIST ITEMS STILL OPEN:
 {open_items}
 
-THIS IS EDA ROUND {round_number} OF {max_rounds}.
+THIS IS EDA ROUND {round_number} OF {max_rounds}. The code ends the exploration when the rounds \
+are used up, when everything is covered and nothing alarming is left, or when rounds stop \
+bringing anything new. Do not spend a round on trivia.
 
-Think it through before you write the questions:
-1. What is already established? Never ask it again.
-2. What is surprising, odd or contradictory in the findings so far? Every surprise deserves a \
-follow-up that asks why: which rows, files or values, and how many.
-3. What could silently ruin the final score: leakage, a train and test mismatch, a split that is \
-too easy, a quirk of the metric?
-4. Which open items matter most for this task?
+Write situation first, two or three sentences. This is your thinking, so be honest in it:
+- what is already established, so you never ask it again (in round 1 say that nothing is known \
+yet)
+- what is surprising, odd or contradictory in the findings so far, and what would explain it
+- what could silently ruin the final score: leakage, a train and test mismatch, a split that is \
+too easy, a quirk of the metric
 
 Then write 2 to {max_questions} questions:
-- Early rounds are broad: cover the most important open items first. Later rounds dig deeper: \
-follow up on high-priority findings and surprises. In the last round, cover what is still open.
+- Round 1 is broad: the most important open items first. Middle rounds dig: follow up on \
+high-priority findings and surprises before the remaining open items. If this is the last \
+round (the round number equals the maximum), finish the open items and add one check of the \
+biggest score risk.
+- If no checklist item is open, ask about the biggest remaining risk: a leakage check, a train \
+versus test shift, or a follow-up on a high-priority finding.
 - Each question is specific. Name the file, column or group, and say what to measure: counts, \
 shares, ranges, a train versus test comparison, or how well one input predicts the target.
 - Each question can be answered by one short script and has a short, mostly numeric answer.
-- Prefer questions whose answer would change a decision about cleaning, features, the split or \
-the model. Skip trivia.
+- End each question with the decision it informs in brackets: (cleaning), (features), (split), \
+(model), (metric) or (leakage). Skip questions that would not change any of these.
 - covers: copy the open checklist items exactly. A follow-up question may cover none, then use \
 an empty list.
-Return JSON: questions (list of objects with text and covers)."""
+Return JSON: situation, questions (list of objects with text and covers)."""
 
 READ_PROMPT = """\
 You are the Data Analyst of an ML team. A script answered your questions. Turn its output into \
@@ -138,17 +151,27 @@ THE SCRIPT OUTPUT:
 Rules for findings:
 - Use only the output above. Never invent or round up numbers. If a result came from a sample, \
 say so in the evidence.
-- One fact per finding. Do not repeat what the team already knows. Skip trivial facts.
+- One fact per finding, at most 6 findings, the most important ones. Do not repeat what the \
+team already knows. Skip trivial facts.
 - statement: what is true, in one sentence.
 - evidence: the exact numbers from the output.
 - implication: what the team should do about it, concrete: a cleaning step, a feature or input \
-preparation idea, a way to split, a metric concern, or a model choice.
+preparation idea, a way to split, a metric concern, or a model choice. Never leave it empty.
 - priority: high when it changes the plan or could make the score misleading, medium when it \
 helps a lot, low otherwise.
 - Pay most attention to surprises, contradictions with the task description or the project \
 documents, and train versus test differences.
 - If the output shows nothing new, return an empty findings list. That is a valid answer.
-- If the script reported problems, do not guess the missing answers.
+- A result that starts with "not answered", and every problem the script reported, is a missing \
+answer. Do not guess it and do not turn it into a finding.
+- If the output ends abruptly it was cut. Use only the complete part.
+
+Example of a good finding (audio data, only to show the style):
+statement: 18 percent of the training clips are shorter than one second.
+evidence: 1,260 of 7,000 clips; median length 3.4 s; no clip in the test files is shorter than 2 s.
+implication: pad or drop the short clips in input preparation, and report the validation score \
+per clip length so the shift does not hide.
+priority: high
 
 Rules for coverage:
 - covered: the output really answers the item. A question that failed or was only partly \
@@ -171,18 +194,20 @@ THE USER'S TASK: {user_task}
 
 {findings_text}
 
-Rules: use only the findings above. Never add facts that are not in them. An empty list is \
-better than a guess.
-- issues: the most important data problems, most important first, each with the key number
-- feature_ideas: concrete ideas, each tied to the finding it comes from in finding_id (for \
-example finding_003). Leave finding_id empty only if no finding supports the idea. For images, \
-text, audio and other non-table data these are ideas for input preparation, such as resizing, \
-augmentation, cleaning, embeddings or spectrograms.
+Rules: use only the text above. Never add facts that are not in it. An empty list is better \
+than a guess. Write one sentence per list entry. Put high-priority findings first.
+- issues: at most 8, the most important data problems first, each with the key number. If the \
+text lists items that were NOT CHECKED, add one issue "Not checked: ..." for each of them.
+- feature_ideas: at most 12 concrete ideas, each tied to the finding it comes from in \
+finding_id (for example finding_003). Leave finding_id empty only if no finding supports the \
+idea. For images, text, audio and other non-table data these are ideas for input preparation, \
+such as resizing, augmentation, cleaning, embeddings or spectrograms.
 - leakage_risks: columns, files or steps that may reveal the answer, with the reason
-- validation_hints: structure that decides how to split the data: time order, groups, class \
-imbalance, speakers, near-duplicates, train versus test shift
-- model_hints: what kind of model or method suits this data and why, based on size, structure, \
-noise and signal seen in the findings
+- validation_hints: the structure that decides how to split the data, naming the column, file \
+or property that defines it: time order, groups, class imbalance, speakers, near-duplicates, \
+train versus test shift
+- model_hints: the kind of model or method that suits this data and why, based on size, \
+structure, noise and signal seen in the findings. Name the kind of method, not a library.
 Return JSON: issues, feature_ideas, leakage_risks, validation_hints, model_hints."""
 
 
@@ -269,6 +294,20 @@ def think(working_ledger: Ledger, agent_context: AgentContext, round_number: int
     question_plan = agent_context.llm_client.ask_structured(AGENT_NAME, prompt, QuestionPlan)
     return question_plan.questions[:MAX_QUESTIONS_PER_ROUND]
 
+EDA_SCRIPT_RULES_TEXT = """\
+- Write one function per question and call each one inside try and except. If a question fails, \
+put its number and the error in problems, give that question the result "not answered: " and \
+the reason, and go on with the others. One failure must never stop the script.
+- Keep the order of the questions in the answers list.
+- For a big table read a sample or chunks (at least 50000 rows when the file has them) and \
+state the sample size in the result.
+- Train versus test: compare the columns, ranges, missing rates and the share of test values \
+that never appear in train. For images, text and audio compare counts, sizes, lengths and \
+formats.
+- A check of how well one input predicts the target may use a shallow tree or a simple \
+statistic on a sample, on training rows only. Never train a full model here.
+- Round numbers to 4 significant digits. Keep each result short and mostly numeric.
+- The whole script must finish within a few minutes."""
 
 def build_check_task(
     questions: list[Question], working_ledger: Ledger, agent_context: AgentContext
@@ -281,8 +320,9 @@ def build_check_task(
         f"- Project folder (read only): {agent_context.workspace.project_folder}\n"
         f"- Never fully load a file larger than {BIG_FILE_MB} MB. Use a sample, chunks or "
         "counts, and say so in the result.\n"
-        "- Compare train and test using the files marked train and test in the brief.\n"
-        "- Print only the final result line. Keep each result short."
+        "- Use the files marked train and test in the brief.\n"
+        "- Print only the final result line. Anything else you print is ignored.\n"
+        f"{EDA_SCRIPT_RULES_TEXT}"
     )
 
 

@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from mlagent.agents.evaluator import VerdictAnswer, run_evaluator
-from mlagent.agents.feature_engineer import run_feature_engineer
+from mlagent.agents.feature_engineer import FoundationPlan, FoundationStep, run_feature_engineer
 from mlagent.agents.ml_lead import PlanDraft, run_ml_lead
 from mlagent.agents.modeler import ModelChoice, run_modeler
 from mlagent.memory import create_new_ledger
@@ -229,7 +229,17 @@ def test_the_four_agents_work_together_on_real_files(make_agent_context, workspa
     ledger.plan = run_ml_lead(ledger, context)
     assert ledger.plan.splits_path == str(workspace.splits_path)
 
-    context = make_agent_context([as_python_answer(FEATURES_SCRIPT, workspace)], 180)
+    foundation = FoundationPlan(
+        analysis="clean and encode tabular inputs",
+        steps=[
+            FoundationStep(
+                scope="cleaning",
+                action="handle missing values and encode",
+                reason="clean tabular data",
+            )
+        ],
+    )
+    context = make_agent_context([foundation, as_python_answer(FEATURES_SCRIPT, workspace)], 180)
     features_result = run_feature_engineer(ledger, context)
     ledger.features = features_result.features
     ledger.current_feature_version = features_result.current_feature_version

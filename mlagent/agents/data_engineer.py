@@ -41,7 +41,8 @@ extensions, a few image sizes. Audio: count, and durations or sample rates of a 
 Text: a few sample lines. Anything else: say what it is.
 4. Find which files are for training, for testing, and any sample submission or label file. \
 Report the columns or format of a sample submission. Note labels kept in folder names or in \
-separate files.
+separate files. For tables, also report which columns are in the train file but not in the \
+test file.
 5. Report anything odd: empty or unreadable files, mixed formats, missing pieces."""
 
 RESULT_KEYS_TEXT = """\
@@ -53,7 +54,8 @@ RESULT_KEYS_TEXT = """\
 
 DATA_ENGINEER_READ_PROMPT = """\
 You are the Data Engineer of an ML team. You opened the project folder like a new colleague \
-and you write the project brief that every other agent relies on.
+and you write the project brief that every other agent relies on. You record facts and the \
+user's wishes. You do not plan experiments and you do not choose models.
 
 {run_rules}
 
@@ -68,24 +70,42 @@ BRIEF SO FAR:
 INSPECTION ROUND {round_number} OF {max_rounds}. The inspection script found:
 {facts_text}
 
-Update the brief using only these facts and the user's words. Meaning of the fields:
+Update the brief using only these facts and the user's words.
+- Never guess a fact that is not in them. Leave that field empty and add the question to \
+open_questions.
+- Copy every field that did not change from BRIEF SO FAR exactly as it is, so nothing is lost \
+between rounds.
+
+How to read the facts:
+- A test file usually has the same columns as the train file, without the target. A column \
+that is in train but not in test is probably the target.
+- A sample submission shows the exact shape of the deliverable.
+- If labels are kept in folder names or in a separate file, say so in target.
+- Documents describe the task. The user's words still win.
+
+Meaning of the fields:
+- summary: two sentences: what the data is and what is to be predicted.
 - modality: your own words, for example tabular, image, text, audio, video, time_series
 - task_family: your own words, for example classification, regression, clustering, \
 forecasting, detection, segmentation, ranking, generation, speech_recognition
 - target: the column or label to predict. Empty for tasks without one.
 - id_column: the column that identifies a row or example. Empty if none.
-- primary_metric: ONE metric in lowercase snake_case that decides which model is best. Take \
-it from the user's metrics, else from the documents. If still unknown, pick the usual metric \
-for this task family and add that choice to open_questions.
-- higher_is_better: true when a bigger primary_metric value is better
+- primary_metric: ONE metric in lowercase snake_case that decides which model is best, for \
+example "macro F1" becomes macro_f1 and "area under the ROC curve" becomes auc. Take it from \
+the user's metrics, else from the documents. If still unknown, pick the usual metric for this \
+task family and add that choice to open_questions.
+- higher_is_better: true when a bigger primary_metric value is better. It is false for error \
+metrics such as rmse, mae and log_loss.
 - extra_metrics: the other metrics the user wants reported
 - deliverable_format: exactly what the final predictions file must look like (file name, \
-columns, what one row means)
+columns, what one row means). For example: predictions.csv with the columns customer_id and \
+churn, one row per row of test.csv, churn is 0 or 1.
 - files: at most {max_files} entries, grouping huge folders into one entry. role is one of \
 train, test, sample_submission, description, other.
+
 Return JSON: brief (all fields), done (true when files, modality, task_family, primary_metric \
-and deliverable_format are all known), next_tasks (what the next inspection should find out, \
-empty when done)."""
+and deliverable_format are all known), next_tasks (what the next inspection should find out: \
+each task concrete and answerable by one short script, empty when done)."""
 
 
 class BriefReading(BaseModel):

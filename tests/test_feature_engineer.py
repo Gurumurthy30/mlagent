@@ -5,11 +5,18 @@ from mlagent.agents.base import AgentFailedError
 from mlagent.agents.feature_engineer import (
     Candidate,
     CandidateList,
+    FoundationPlan,
+    FoundationStep,
     ScreenedCandidate,
     ScreenResult,
     clean_candidates,
+    describe_skipped_steps,
+    find_candidate_problem,
     judge_candidates,
+    normalize_family,
+    propose_foundation,
     run_feature_engineer,
+    write_candidates_file,
 )
 from mlagent.events import EventType
 from mlagent.memory import create_new_ledger
@@ -31,6 +38,19 @@ if __name__ == "__main__":
 
 def features_module_answer() -> str:
     return f"```python\n{FEATURES_SOURCE}\n```"
+
+
+def foundation_plan_answer(steps=None) -> FoundationPlan:
+    if steps is None:
+        steps = [
+            FoundationStep(
+                scope="customer_id",
+                action="drop_input",
+                reason="id column",
+                finding_id="",
+            )
+        ]
+    return FoundationPlan(analysis="analysis of raw inputs", steps=steps)
 
 
 def round_zero_ledger():
@@ -77,7 +97,7 @@ NOISY_SCORES = [0.95, 0.70, 0.85, 0.72, 0.84]
 
 
 def test_round_zero_writes_the_first_features_file(make_agent_context, workspace):
-    agent_context = make_agent_context([features_module_answer()])
+    agent_context = make_agent_context([foundation_plan_answer(), features_module_answer()])
 
     result = run_feature_engineer(round_zero_ledger(), agent_context)
 
@@ -86,25 +106,29 @@ def test_round_zero_writes_the_first_features_file(make_agent_context, workspace
     assert [(f.feature_id, f.name, f.kept) for f in result.features] == [
         ("feature_001", "basic_preparation", True)
     ]
-    assert result.features[0].reason == "ok"
+    assert result.features[0].reason == "ok (1 planned steps)"
     assert workspace.features_file(1).exists()
 
 
 def test_round_zero_task_says_the_script_is_the_features_file(make_agent_context, workspace):
-    agent_context = make_agent_context([features_module_answer()])
+    agent_context = make_agent_context([foundation_plan_answer(), features_module_answer()])
 
     run_feature_engineer(round_zero_ledger(), agent_context)
 
-    coder_prompt = agent_context.llm_client.received_prompts[0]
+    foundation_prompt, coder_prompt = agent_context.llm_client.received_prompts
+    assert "You are the Feature Engineer" in foundation_prompt
     assert f"Write the file {workspace.features_file(1)}" in coder_prompt
     assert "Your script IS the features file" in coder_prompt
     assert "Use class weights." in coder_prompt
     assert "Never use the target or labels" in coder_prompt
-    assert "Images: loading, resizing, normalizing" in coder_prompt
+    assert "Images, text and audio: loading, fixed size or length, normalization" in coder_prompt
+    assert "1. [drop_input] customer_id: id column" in coder_prompt
 
 
 def test_round_zero_failure_stops_the_run(make_agent_context):
-    agent_context = make_agent_context(two_failed_coder_attempts("no data"))
+    agent_context = make_agent_context(
+        [foundation_plan_answer(), *two_failed_coder_attempts("no data")]
+    )
 
     with pytest.raises(AgentFailedError, match="basic input preparation"):
         run_feature_engineer(round_zero_ledger(), agent_context)
@@ -141,6 +165,16 @@ def test_the_prompts_carry_the_source_the_candidates_and_only_the_kept_ones(
     make_agent_context, workspace
 ):
     ledger = features_round_ledger(workspace)
+    ledger.features.append(
+        FeatureRecord(
+            feature_id="feature_002",
+            name="prior_feature",
+            reason="[ratio] earlier test",
+            kept=True,
+            score_gain=0.03,
+            feature_version=1,
+        )
+    )
     candidates = [candidate("tenure_bucket"), candidate("noisy_ratio")]
     scores = {"tenure_bucket": GOOD_SCORES, "noisy_ratio": NOISY_SCORES}
     agent_context = make_agent_context(
@@ -153,8 +187,8 @@ def test_the_prompts_carry_the_source_the_candidates_and_only_the_kept_ones(
     assert "CURRENT FEATURES FILE (version 1)" in propose_prompt
     assert "def prepare_inputs(table)" in propose_prompt
     assert "Never repeat an idea" in propose_prompt
-    assert "basic_preparation" in propose_prompt
-    assert "def tenure_bucket" in screening_prompt and "def noisy_ratio" in screening_prompt
+    assert "tenure_bucket" in screening_prompt and "noisy_ratio" in screening_prompt
+    assert "screen_candidates_round_1" in screening_prompt
     assert str(workspace.splits_path) in screening_prompt
     assert "baseline_scores" in screening_prompt
     assert "def tenure_bucket" in version_prompt
@@ -319,7 +353,66 @@ def test_events_show_the_screening_and_the_result(make_agent_context, workspace)
     run_feature_engineer(ledger, agent_context)
 
     messages = [e.message for e in received_events if e.agent_name == "Feature Engineer"]
-    assert "screening 2 candidates" in messages
+    assert any(m.startswith("screening 2 candidates") for m in messages)
     assert "1 of 2 candidates showed a counted gain" in messages
     assert received_events[-1].event_type == EventType.AGENT_FINISHED
     assert "features file version 2" in messages[-1]
+
+
+def test_describe_skipped_steps():
+    assert describe_skipped_steps(None) == ""
+    assert describe_skipped_steps([]) == ""
+    assert (
+        describe_skipped_steps(
+            [
+                {"step": 1, "status": "skipped", "note": "column missing"},
+                {"step": 2, "status": "done", "note": "completed"},
+                {"step": "tenure", "status": "skipped", "note": "constant"},
+            ]
+        )
+        == "1: column missing; tenure: constant"
+    )
+
+
+def test_find_candidate_problem():
+    broken_syntax = Candidate(name="bad", code="def bad(: return", reason="x")
+    assert "syntax error" in find_candidate_problem(broken_syntax, require_fit_and_apply=False)
+
+    no_func = Candidate(name="no_fn", code="x = 1", reason="x")
+    assert find_candidate_problem(no_func, require_fit_and_apply=False) == "no function defined"
+
+    valid_one_fn = Candidate(name="f", code="def f(table): return table", reason="x")
+    assert find_candidate_problem(valid_one_fn, require_fit_and_apply=False) == ""
+    assert (
+        find_candidate_problem(valid_one_fn, require_fit_and_apply=True)
+        == "missing fit_<name> and apply_<name>"
+    )
+
+    valid_fit_apply = Candidate(
+        name="good",
+        code="def fit_good(t): return None\ndef apply_good(t, s): return t",
+        reason="x",
+    )
+    assert find_candidate_problem(valid_fit_apply, require_fit_and_apply=True) == ""
+
+
+def test_write_candidates_file(tmp_path):
+    target = tmp_path / "candidates.py"
+    good = Candidate(name="c1", code="def c1(t): return t", reason="r1")
+    bad = Candidate(name="c2", code="syntax error here", reason="r2")
+    accepted, rejected = write_candidates_file([good, bad], target, require_fit_and_apply=False)
+
+    assert [c.name for c in accepted] == ["c1"]
+    assert len(rejected) == 1
+    assert rejected[0][0].name == "c2"
+    assert "syntax error" in rejected[0][1]
+    assert target.exists()
+    content = target.read_text(encoding="utf-8")
+    assert "import pandas as pd" in content
+    assert "def c1(t): return t" in content
+
+
+def test_normalize_family():
+    assert normalize_family(" RATIO ") == "ratio"
+    assert normalize_family("non_existent_family") == "other"
+

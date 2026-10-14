@@ -183,6 +183,7 @@ def test_the_checks_task_names_the_files_and_forbids_changing_the_run(
     assert "Never change files in the experiment folder" in coder_prompt
     assert "Do these checks:" in coder_prompt
     assert "<CHECKS>JSON</CHECKS>" in coder_prompt
+    assert "fold_of_example" in coder_prompt
     assert (evaluation_folder / "check_run.py").exists()
 
 

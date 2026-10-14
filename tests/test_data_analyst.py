@@ -112,7 +112,7 @@ def test_the_prompts_carry_the_round_counter_the_open_items_and_the_output(make_
     assert "<FINDINGS>JSON</FINDINGS>" in prompts[2]
     assert "churn rate is 12 percent" in prompts[3]
     assert "question 1 (covers: missing values)" in prompts[3]
-    assert "Rules: use only the findings above." in prompts[4]
+    assert "Rules: use only the text above." in prompts[4]
     assert "finding_001" in prompts[4]
 
 

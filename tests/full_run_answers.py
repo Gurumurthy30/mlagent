@@ -25,6 +25,7 @@ from mlagent.agents.data_analyst import (
 )
 from mlagent.agents.data_engineer import BriefReading
 from mlagent.agents.evaluator import VerdictAnswer
+from mlagent.agents.feature_engineer import FoundationPlan, FoundationStep
 from mlagent.agents.ml_lead import PlanDraft
 from mlagent.agents.modeler import ModelChoice
 from mlagent.agents.reviewer import ReviewDraft
@@ -111,6 +112,16 @@ def answers_before_the_modeler(workspace) -> list:
         ),
         plan_draft,
         as_python_answer(SPLITS_SCRIPT, workspace),
+        FoundationPlan(
+            analysis="clean and encode tabular inputs",
+            steps=[
+                FoundationStep(
+                    scope="cleaning",
+                    action="handle missing values and encode",
+                    reason="clean tabular data",
+                )
+            ],
+        ),
         as_python_answer(FEATURES_SCRIPT, workspace),
     ]
 

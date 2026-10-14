@@ -91,15 +91,30 @@ TUNE_TIME_FRACTION = 0.6
 PREDICTIONS_FILE_STEM = "predictions"
 REPORT_FILE_NAME = "report.md"
 
+FOUNDATION_PLAN_ENABLED = True
+PROMPT_MIN_CANDIDATES = 4
+PROMPT_MAX_CANDIDATES = 10
+SCREEN_TIME_FRACTION = 0.5
+NEW_VERSION_SOURCE_CHARS = 12000
+FOUNDATION_DIGEST_CHARS = 6000
+FOUNDATION_MAX_STEPS = 14
+FEATURE_REASON_CHARS = 80
+ANALYSIS_EVENT_CHARS = 300
+RECORD_NOTE_CHARS = 300
+BASIC_PREPARATION_NAME = "basic_preparation"
+FEATURE_STEPS_NAME = "FEATURE_STEPS"
+SKIPPED_FOR_TIME_PREFIX = "skipped"
+CANDIDATE_FILE_HEADER = "import numpy as np\nimport pandas as pd\n\n\n"
+
 DIGEST_CHAR_LIMITS = {
-    "data_engineer": 1500,
-    "data_analyst": 4000,
-    "ml_lead": 3500,
-    "feature_engineer": 4000,
-    "modeler": 4000,
-    "evaluator": 2500,
-    "tuner": 1500,
-    "reviewer": 4500,
-    "submitter": 3000,
-    "coder": 6000,
+    "data_engineer": 8500,
+    "data_analyst": 5000,
+    "ml_lead": 4500,
+    "feature_engineer": 16000,
+    "modeler": 7000,
+    "evaluator": 5500,
+    "tuner": 5500,
+    "reviewer": 5500,
+    "submitter": 4000,
+    "coder": 8000,
 }

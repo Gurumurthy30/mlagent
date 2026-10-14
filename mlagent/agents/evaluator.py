@@ -20,6 +20,7 @@ from mlagent.agents.base import (
 from mlagent.agents.coder import run_coder
 from mlagent.digest import describe_brief, describe_run
 from mlagent.events import EventType
+from mlagent.script_contract import SPLITS_FORMAT_TEXT
 from mlagent.settings import HOLDOUT_GAP_RELATIVE, SCORE_MISMATCH_RELATIVE_TOLERANCE
 from mlagent.state import Evaluation, ExperimentRun, Ledger, Verdict
 
@@ -155,6 +156,11 @@ def build_checks_task(ledger: Ledger, run: ExperimentRun, agent_context: AgentCo
         "Do these checks:\n"
         "1. Recompute the primary metric on each validation split from the saved validation "
         "predictions and the true labels, using the splits file. Report the mean.\n"
+        "   - In the validation predictions file, identify the predicted column (matches the target "
+        "or probabilities, NOT the id column).\n"
+        "   - Match predictions to true labels correctly: if the predictions file has an ID column "
+        "(like PassengerId), join with the original data on that ID column. Never confuse "
+        "0-based row positions with 1-based ID numbers.\n"
         "2. Recompute the score on the holdout examples (fold -1), if any and if predictions "
         "exist for them.\n"
         "3. Look for leakage. Tables: does any single column predict the target almost "
@@ -163,7 +169,8 @@ def build_checks_task(ledger: Ledger, run: ExperimentRun, agent_context: AgentCo
         "name or any field that gives the answer away?\n\n"
         f"Rules: write only inside {workspace.evaluation_folder(run.experiment_id)}. "
         "Never change files in the experiment folder.\n\n"
-        f"{describe_brief(ledger)}"
+        f"{describe_brief(ledger)}\n\n"
+        f"{SPLITS_FORMAT_TEXT}"
     )
 
 

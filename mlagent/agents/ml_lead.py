@@ -21,6 +21,7 @@ from mlagent.settings import (
     BIG_FILE_MB,
     DEFAULT_SPLIT_COUNT,
     HOLDOUT_FRACTION,
+    MAX_ERROR_TEXT_CHARS,
     MAX_PLAYBOOK_CHARS,
     MIN_EXAMPLES_FOR_HOLDOUT,
     RANDOM_SEED,
@@ -39,61 +40,82 @@ SPLITS_RESULT_KEYS_TEXT = """\
 - "n_holdout": number of examples with fold -1"""
 
 PLAN_PROMPT = """\
-You are the ML Lead of an ML team. You are the senior who decides how the team measures \
-progress, what the baseline is, and what the plan is. Every agent after you follows this plan, \
-and a bad validation setup makes every later score misleading, so take your time on it.
+You are the ML Lead of an ML team. You decide how the team measures progress, what the \
+baseline is and what the plan is. Every agent after you follows this plan, and a validation \
+setup that is easier than the real test makes every later score misleading. You do not write \
+code and you do not choose the final model.
 
 {run_rules}
 
 WHAT THE TEAM KNOWS (task, files, EDA findings, hints):
 {digest}
 
-Think before you write the plan:
-1. What exactly is predicted, and how will the final result be scored? Read the metric from \
-the brief. Does it need class labels, probabilities, ranks or numbers? Is it sensitive to \
-imbalance, outliers or scale?
+Start with analysis, 3 to 5 sentences. This is your thinking, so be honest in it. Answer in \
+this order:
+1. What is predicted and how is it scored? Does the metric need labels, probabilities, ranks \
+or numbers? Is it sensitive to imbalance, outliers or scale?
 2. How will the real test data differ from the training data: later in time, other groups, \
-other sources, new categories? The validation must imitate that difference. If validation is \
-easier than the real test, every score will lie.
-3. What do the EDA validation_hints and leakage_risks say about structure: time order, groups, \
-duplicates, imbalance, speakers, patients, near-duplicates?
-4. How much data is there and how slow is training? Use the machine description and the time \
-limit in the run rules. A plan the machine cannot finish is a bad plan.
+other sources, new categories? Name the EDA evidence. If nothing in the EDA says they differ, \
+say that.
+3. Which structure must the validation respect: time order, groups, duplicates, imbalance, \
+speakers, patients? Read validation_hints and leakage_risks.
+4. How slow is training? One model run trains once per validation split plus once for the \
+final fit, so one training must be several times shorter than the time limit in the run rules. \
+Use the machine description too.
 
-Write the plan:
+Then write the plan fields:
 - validation_scheme: exactly one of kfold, stratified_kfold, group_kfold, time_split, \
 single_split, repeated_seeds.
   - stratified_kfold for classification with imbalance
-  - group_kfold when rows of one group (user, patient, speaker, source) must not be split \
-across folds
-  - time_split when the test lies in the future
-  - single_split when training is slow, for example deep learning on images, audio or large \
-text
+  - group_kfold when rows of one group (user, patient, speaker, site, source) must not be \
+split across folds
+  - time_split when the test lies in the future. It gives one validation block, the latest \
+part of the training data.
+  - single_split when one training is too slow to repeat for every fold, for example deep \
+learning on images, audio or large text
   - repeated_seeds only when there are no labels
   - kfold otherwise
   When two structures apply, choose the one that causes the worse leakage if ignored. \
-validation_reason: one sentence that names the evidence from the EDA or the task.
+validation_reason: one sentence that names the EDA finding or the task fact behind it.
 - primary_metric and higher_is_better: take them from the brief unless the user's words say \
 otherwise. Never invent a metric the task does not use. extra_metrics: other metrics worth \
-reporting (for example per-class or calibration), at most 3.
+reporting, at most 3.
 - baseline_description: the simplest sensible first model plus the basic input preparation \
-for this data. It must run fast and be hard to get wrong. It is the number every later idea \
-has to beat.
-- target_score: a number only if the user stated a goal. Otherwise null. Never guess one.
+for this data. It must run fast and be hard to get wrong. Every later idea has to beat it.
+- target_score: a number only if the user stated a goal, otherwise null. Never guess one.
 - use_gpu: true only if the task needs a GPU (deep learning on images, audio, text) and the \
-machine above can use one. The configuration and the machine have the last word.
-- risks: up to {max_risks} items, most dangerous first, each specific to this project and \
-each with the action that prevents it. Not generic advice.
-- playbook: 6 to 10 short lines, read by the Feature Engineer, Modeler, Tuner, Evaluator and \
-Reviewer. Make it concrete for this task. Cover:
-  - which model families usually work on this kind of data, and which to start with
+machine above can use one. The config and the machine have the last word.
+- risks: up to {max_risks} items, most dangerous first. Each is specific to this project and \
+names the action that prevents it. No generic advice.
+- playbook: 6 to 8 short lines, under 1100 characters in total, the most important line first. \
+Every later agent reads it, but it is cut at 1200 characters. Cover:
+  - which kinds of model usually work on this data and which one to start with (kinds of \
+method, not library names)
   - input preparation that usually helps, and what to avoid
-  - quirks of the metric (for example probabilities instead of labels, clipping, thresholds)
+  - quirks of the metric (labels or probabilities, thresholds, clipping)
   - how to handle imbalance, groups or time in training
   - how to stay inside the time limit (subsample, fewer epochs, smaller models)
-  - how the team should spend its experiments: cheap, broad tests first, expensive ones later
-  Use only facts from the task, the brief and the EDA. If you are unsure about something, \
-say so in the line instead of stating it as a fact.
+  - how to spend the rounds: cheap broad tests first, expensive ones later
+  Take facts about this data only from the task, the brief and the EDA. For what usually \
+works you may use general ML knowledge. Write "probably" in a line you are not sure about.
+
+Example of the style only, for another kind of task (do not copy its content):
+analysis: Twelve bird species are scored by macro F1, so the result needs labels, and rare \
+species weigh as much as common ones. The recordings come from 60 sites and finding_004 says \
+the test clips come from sites that are not in train, so folds must keep a site together. \
+Training a neural network is slow, but 5 folds of a small model fit the time limit.
+validation_scheme: group_kfold
+validation_reason: Test clips come from new sites (finding_004), so every fold keeps whole sites.
+baseline_description: 5-second mel spectrogram crops, a small pretrained audio CNN, 3 epochs.
+playbook:
+- Start with a small pretrained audio model on mel crops. Try bigger models only after cheap \
+tests.
+- Prepare input: one sample rate, fixed length, per-clip normalization. Avoid augmentation \
+that can change the label.
+- Macro F1 needs labels: choose thresholds on validation, never on the holdout.
+- Class counts are very uneven: class weights or balanced sampling.
+- One training must stay under 6 minutes: subsample clips, 3 epochs, cache spectrograms.
+- Spend early rounds on cheap tests (crop length, augmentation), the big model last.
 Return JSON with exactly these fields."""
 
 
@@ -154,33 +176,41 @@ def build_splits_task(
         "to list the examples. On big data use hashing or exact matching for duplicates and "
         "say in the result what you skipped.",
         "- List every training example exactly once in example_ids, in the order the training "
-        "data lists them (row order for tables, sorted file names for folders). Use the same "
-        "ids the training data uses.",
+        "data lists them. Ids: for a table the row position (0 based) in the training file, "
+        "for a folder the file path relative to the project folder. Say which in "
+        "id_description. Not needed for repeated_seeds.",
         "- Print the number of examples you found before splitting. It must match the number of "
         "rows (or files) of the training data. If it is 1 or far too small, you read the data "
         "wrongly: fix that first.",
         "- Only when the EDA structure above names duplicates or groups: keep rows with identical "
         "content (ignoring the id column) together, in the holdout or in one fold. Otherwise every "
         "example is independent: do not build groups and do not hash rows.",
-        f"- Use {DEFAULT_SPLIT_COUNT} validation splits for the kfold schemes, fewer when the "
-        "data is tiny, but keep at least 30 examples in every validation split. For "
-        "single_split use one validation split of about 20 percent.",
+        f"- kfold, stratified_kfold and group_kfold: use {DEFAULT_SPLIT_COUNT} validation splits, "
+        "fewer when the data is tiny, but keep at least 30 examples in every validation split. "
+        "For stratified_kfold every class must appear in every validation split.",
+        "- single_split: one validation split of about 20 percent. time_split: also one "
+        "validation split, the latest 20 percent of the examples that are not held out. A "
+        "split is trained on all other non-holdout examples, so for time_split they must all "
+        "be earlier.",
         f"- When there are at least {MIN_EXAMPLES_FOR_HOLDOUT} examples, hold out about "
         f"{int(HOLDOUT_FRACTION * 100)} percent of them (fold -1) first. With fewer examples "
         "hold out nothing.",
         "- The holdout follows the scheme: random for kfold, stratified on the target for "
         "stratified_kfold, whole groups for group_kfold, the latest examples in time order "
         "for time_split. Make the validation splits from the remaining examples with the same "
-        "rule.",
+        "rule. For group_kfold with an imbalanced target, also spread the classes over the "
+        "folds as evenly as the groups allow.",
         "- After saving, check the file: every example appears once, the holdout and folds do "
         "not overlap, no duplicate group named in the EDA crosses a boundary, and for time_split "
-        "every validation example is later than its training examples. Fix it if a check fails.",
+        "every validation and holdout example is later than all training examples. Fix it if a "
+        "check fails.",
     ]
     if previous_error:
         rules.append(
-            f"- A first attempt failed with: {previous_error}. Write the simplest correct "
-            "version: keep the scheme but drop every optional rule (duplicate groups and "
-            "extra checks), and make sure the file follows the format below."
+            f"- A first attempt failed with: {trim_text(previous_error, MAX_ERROR_TEXT_CHARS)}. "
+            "Write the simplest correct version: keep the scheme but drop every optional rule "
+            "(duplicate groups and extra checks), and make sure the file follows the format "
+            "below."
         )
     rules_text = "\n".join(rules)
     return (

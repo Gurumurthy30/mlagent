@@ -106,7 +106,7 @@ def test_the_splits_task_names_the_scheme_the_path_the_hints_and_the_format(
     assert f"Save the file to exactly this path: {workspace.splits_path}" in coder_prompt
     assert "group by customer_id" in coder_prompt
     assert '"fold_of_example"' in coder_prompt
-    assert "Use 5 validation splits" in coder_prompt
+    assert "use 5 validation splits" in coder_prompt
     assert "at least 1000 examples" in coder_prompt
     assert "primary metric: macro_f1" in coder_prompt
 
