@@ -412,9 +412,11 @@ def build_default_config_text() -> str:
 DEFAULT_CONFIG_TEXT = build_default_config_text()
 
 
-def apply_overrides(config_dict: dict[str, Any], overrides: list[str]) -> dict[str, Any]:
-    """Apply --set section.key=value overrides into the config dictionary."""
-    result = copy.deepcopy(config_dict)
+def apply_overrides(config_input: dict[str, Any] | AppConfig, overrides: list[str]) -> Any:
+    """Apply --set section.key=value overrides into config dictionary or AppConfig instance."""
+    is_app_config = isinstance(config_input, AppConfig)
+    result = config_input.model_dump() if is_app_config else copy.deepcopy(config_input)
+
     for override in overrides:
         if "=" not in override:
             raise ConfigError(f"Invalid override '{override}'. Format must be section.key=value")
@@ -430,6 +432,12 @@ def apply_overrides(config_dict: dict[str, Any], overrides: list[str]) -> dict[s
         if section not in result or not isinstance(result[section], dict):
             result[section] = {}
         result[section][key] = parsed_value
+
+    if is_app_config:
+        try:
+            return AppConfig.model_validate(result)
+        except ValidationError as err:
+            raise ConfigError(f"Configuration error: {err}") from err
     return result
 
 

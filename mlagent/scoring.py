@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import math
-from pathlib import Path
 import statistics
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ValidationError

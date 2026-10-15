@@ -239,16 +239,68 @@ A "counted gain" means a new result beats the best one by more than its noise: t
 per-split improvements must exceed its standard error (three or more splits), or a small
 relative margin otherwise.
 
-## Tests
+## Testing
 
-```
+Install the development dependencies:
+
+```powershell
 pip install -e ".[dev]"
+```
+
+### Running Tests
+
+Run the full test suite (skips live Ollama tests by default):
+
+```powershell
 pytest
+```
+
+Run with test coverage report:
+
+```powershell
+pytest --cov=mlagent --cov-report=term-missing
+```
+
+Run static lint checks:
+
+```powershell
 ruff check .
 ```
 
-The tests never need Ollama. A scripted fake model answers, a tiny fake Ollama server checks
-the real request format, and the scripts the agents run really execute (pandas, scikit-learn).
+### Test Markers
+
+Tests are organized with explicit pytest markers:
+- `unit`: Fast invariant, property, and contract tests on state, config, digest, routing, prompts, and scoring.
+  ```powershell
+  pytest -m unit
+  ```
+- `integration`: End-to-end LangGraph pipeline tests using fake LLM and canned Coder outputs.
+  ```powershell
+  pytest -m integration
+  ```
+- `live`: Tests requiring an active local Ollama server (skipped by default unless `MLAGENT_LIVE=1`).
+  ```powershell
+  $env:MLAGENT_LIVE="1"; pytest -m live
+  ```
+
+### Hypothesis Profiles & Seed Reproduction
+
+Property-based tests generate random ledgers and briefs using [Hypothesis](https://hypothesis.readthedocs.io/):
+- `HYPOTHESIS_PROFILE=dev` (default): Fast local execution (50 examples per property).
+- `HYPOTHESIS_PROFILE=ci`: CI matrix execution (100 examples per property).
+- `HYPOTHESIS_PROFILE=thorough`: Scheduled deep test runs (500 examples per property).
+
+Every test run outputs a reproducible session seed in the header:
+```
+mlagent session seed: 720004 (reproduce with --mlagent-seed=720004)
+```
+
+To reproduce any failure with the exact same pseudo-random sequence:
+```powershell
+pytest --mlagent-seed=720004
+# or via environment variable:
+$env:MLAGENT_TEST_SEED="720004"; pytest
+```
 
 ## Honest limits
 

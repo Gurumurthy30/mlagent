@@ -5,6 +5,7 @@ Every later agent follows this plan.
 """
 
 from typing import Literal
+
 from pydantic import BaseModel
 
 from mlagent.agents.base import AgentContext, AgentFailedError

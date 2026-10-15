@@ -10,9 +10,9 @@ when the loop stops:  submit (mechanical) -> report (written by the Reviewer) ->
 
 from __future__ import annotations
 
+import traceback
 from collections.abc import Callable
 from pathlib import Path
-import traceback
 
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
@@ -427,6 +427,8 @@ def record_unexpected_error(error: Exception, agent_context: AgentContext) -> No
 
 def run_pipeline(ledger: Ledger, agent_context: AgentContext) -> Ledger:
     """Run or resume the project from the phase saved in the ledger. Returns the final ledger."""
+    if ledger.status == "failed" and ledger.phase != "done":
+        ledger = ledger.model_copy(update={"status": "running", "error_message": ""})
     max_experiment_loops = agent_context.config.limits.max_experiment_loops
     step_limit = max_experiment_loops * STEPS_PER_ROUND_ALLOWANCE + EXTRA_STEPS_ALLOWANCE
     pipeline = build_pipeline(agent_context)

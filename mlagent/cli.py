@@ -11,8 +11,8 @@ from mlagent import __version__
 from mlagent.agents.base import AgentContext
 from mlagent.code_runner import CodeRunner
 from mlagent.config import (
-    ConfigError,
     DEFAULT_CONFIG_TEXT,
+    ConfigError,
     get_effective_config_details,
     load_or_create_config,
 )

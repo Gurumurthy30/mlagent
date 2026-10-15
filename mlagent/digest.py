@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from mlagent.state import Ledger, FeatureRecord
+    from mlagent.state import FeatureRecord, Ledger
 
 DIGEST_CHAR_LIMITS: dict[str, int] = {
     "data_engineer": 8500,
@@ -382,7 +382,7 @@ def build_report_facts(ledger: Ledger, char_limit: int | None = None) -> str:
     # 4. Kept features
     kept_features = [f for f in ledger.features if f.kept]
     kept_items = [
-        f"- {f.name} ({f.family or 'general'}): gain {f.score_gain:+.4f if f.score_gain is not None else 'n/a'} | finding: {f.finding_id or 'none'} | reason: {f.reason}"
+        f"- {f.name} ({f.family or 'general'}): gain {f'{f.score_gain:+.4f}' if f.score_gain is not None else 'n/a'} | finding: {f.finding_id or 'none'} | reason: {f.reason}"
         for f in kept_features
     ]
     if not kept_items:

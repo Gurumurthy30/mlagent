@@ -64,8 +64,13 @@ def extract_tagged_json(output_text: str, tag_name: str) -> dict | None:
     matches = re.findall(rf"<{escaped_tag}>(.*?)</{escaped_tag}>", output_text, re.DOTALL)
     if not matches:
         return None
+    raw_content = matches[-1].strip()
+    if raw_content.startswith("```"):
+        lines = raw_content.splitlines()
+        if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].strip() == "```":
+            raw_content = "\n".join(lines[1:-1]).strip()
     try:
-        parsed_value = json.loads(matches[-1])
+        parsed_value = json.loads(raw_content)
     except json.JSONDecodeError:
         return None
     return parsed_value if isinstance(parsed_value, dict) else None

@@ -21,6 +21,7 @@ Phase = Literal[
     "ml_lead",
     "experiment_loop",
     "submitter",
+    "submit",
     "report",
     "done",
 ]

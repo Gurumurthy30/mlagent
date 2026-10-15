@@ -6,9 +6,9 @@ Supports shell commands (e.g. pip install) and library lookups.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
 
 from mlagent.agents.base import AgentContext
 from mlagent.code_runner import extract_tagged_json, keep_end_of_text

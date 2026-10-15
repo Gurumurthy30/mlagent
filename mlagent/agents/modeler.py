@@ -99,6 +99,7 @@ def run_modeler(ledger: Ledger, agent_context: AgentContext) -> ExperimentRun:
             else "Choose a NEW model family or distinct setup likely to beat the best run."
         )
         digest = build_digest(AGENT_KEY, ledger)
+        candidate: ModelChoice | None = None
         for _ in range(3):
             prompt = CHOOSE_PROMPT.format(digest=digest, round_goal=round_goal)
             candidate = agent_context.llm_client.ask_structured(AGENT_NAME, prompt, ModelChoice)
@@ -183,6 +184,7 @@ def run_modeler(ledger: Ledger, agent_context: AgentContext) -> ExperimentRun:
     if run.crashed:
         event_bus.emit(EventType.WARNING, AGENT_NAME, f"{experiment_id} crashed: {run.error[:80]}")
     else:
-        event_bus.emit(EventType.AGENT_FINISHED, AGENT_NAME, f"{experiment_id} trained, score {run.score_mean:.4f}")
+        score_str = f"{run.score_mean:.4f}" if run.score_mean is not None else "n/a"
+        event_bus.emit(EventType.AGENT_FINISHED, AGENT_NAME, f"{experiment_id} trained, score {score_str}")
 
     return run

@@ -196,7 +196,7 @@ def run_report(ledger: Ledger, agent_context: AgentContext) -> tuple[str, str]:
     headline = ""
     match = re.search(r"## In brief\s*\n(.*?)(?=\n## |\Z)", report_markdown, re.DOTALL)
     if match:
-        brief_lines = [l.strip() for l in match.group(1).splitlines() if l.strip()]
+        brief_lines = [line.strip() for line in match.group(1).splitlines() if line.strip()]
         headline = " ".join(brief_lines)
 
     if not headline:
