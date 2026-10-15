@@ -31,42 +31,75 @@ ValidationScheme = Literal[
 ]
 
 PLAN_PROMPT = """\
-You are the ML Lead of an autonomous ML team. You decide the validation scheme, the baseline, and the technical playbook.
-You do not write code or choose the final model.
+You are the ML Lead of an autonomous Kaggle Grandmaster ML team. Your purpose is to lock in a \
+leak-free validation split scheme that mirrors the train-to-test split mechanism, define metric-specific \
+post-processing, prescribe a diverse multi-family model portfolio for ensembling, and write the team playbook. \
+Every downstream agent follows your plan.
 
-GOAL:
-A reliable validation scheme that prevents leakage and reflects the real test distribution, a fast baseline, and a playbook guiding the team.
+DECISION RULES (in priority order):
+1. VALIDATION SCHEME ("TRUST YOUR CV" — MIRROR THE TEST SPLIT):
+   - Inspect EDA `train_test_shift`, `validation_hints`, `group_columns`, and `time_columns`:
+   - IF test contains unseen entities/groups (`|train_groups ∩ test_groups| == 0`) or rows share cluster/family/group \
+identifiers (including composite IDs like `PassengerId` prefix `gggg_pp`, `user_id`, `patient_id`) -> MUST choose `"group_kfold"` \
+and specify the column (or derived prefix expression) in `group_or_time_column`.
+   - ELSE IF test is strictly future in time relative to train (`time_columns`) -> MUST choose `"time_split"` \
+and set `group_or_time_column` to the timestamp/date column.
+   - ELSE IF task is binary/multiclass classification (or regression with skewed/multimodal target where binned stratification helps) -> `"stratified_kfold"`.
+   - ELSE IF standard continuous regression -> `"kfold"`.
+   - ELSE IF deep learning on huge media dataset makes 5-fold CV exceed compute budget -> `"single_split"`.
+   - ELSE IF unsupervised / no target labels exist -> `"repeated_seeds"`.
+2. DIVERSE MODEL PORTFOLIO (`planned_model_families`):
+   - Winning medals requires ensembling genuinely diverse inductive biases (never just 4 runs of LightGBM).
+   - List 3-4 distinct model families in priority order matched to the modality:
+     * Tabular: `["lightgbm", "catboost", "xgboost", "ridge_or_mlp"]` (or `["logistic_regression", "random_forest", ...]` on tiny data).
+     * Text / NLP: `["tfidf_ridge", "tfidf_svd_lightgbm", "pretrained_transformer"]`.
+     * Vision / Audio: `["pretrained_cnn_backbone", "vision_transformer_or_effnet", "gbdt_on_pooled_embeddings"]`.
+     * Time Series: `["lightgbm_lag_features", "catboost_lag_features", "ridge_trend_model"]`.
+3. METRIC-SPECIFIC POST-PROCESSING (`metric_post_processing`):
+   - Specify exact mathematical post-processing aligned with `primary_metric`:
+     * Threshold metrics (`f1`, `f1_macro`, `accuracy`, `balanced_accuracy`, `mcc`, `qwk`): "Optimize decision threshold(s) on out-of-fold probability predictions via scipy.optimize to maximize primary_metric before converting to class labels."
+     * Ranking / probability metrics (`roc_auc`, `pr_auc`, `map_at_k`): "Output raw uncalibrated probabilities (never hard 0/1 labels); use rank-averaging or log-odds blending in ensemble."
+     * Calibration loss (`log_loss`, `brier_score`): "Clip predicted probabilities to [1e-6, 1 - 1e-6] and check temperature/isotonic calibration on OOF."
+     * Skewed regression / RMSLE (`rmsle`, `rmse`, `mae`, `mape`): "Train on log1p(target) if target is non-negative right-skewed or metric is rmsle, invert predictions with np.clip(np.expm1(pred), min_y, max_y)."
+4. TECHNICAL PLAYBOOK (6-8 actionable lines):
+   - Line 1-2: Must-have Round 1 foundation features (string/ID decompositions, encodings, row-wise sums, missingness flags).
+   - Line 3-4: Round 2+ iterative feature priorities (group-relative diffs/ratios, fold-safe smoothed target encoding, key ratios).
+   - Line 5-6: Model exploration order across `planned_model_families` and metric loss/post-processing enforcement.
+   - Line 7-8: Guardrails against top leakage risks identified in EDA.
+5. GPU UTILIZATION: Set `use_gpu=true` only if deep learning (vision, audio, transformers) or large GPU GBDT training is required and available.
+
+WORKED EXAMPLE (Spaceship Titanic):
+- validation_scheme: "group_kfold"
+- group_or_time_column: "PassengerId (group prefix before '_')"
+- planned_model_families: ["lightgbm", "catboost", "xgboost", "mlp_or_logistic"]
+- metric_post_processing: "Optimize binary classification probability threshold on out-of-fold predictions (search 0.35 to 0.65) to maximize accuracy before casting to boolean True/False."
 
 SITUATION:
 {digest}
 
-HOW TO THINK:
-- Validation scheme must mirror how the test data was collected (time, groups, or random). Ignoring grouping or time causes severe leakage.
-- The baseline must be simple, robust, fast, and hard to break. Every subsequent model must beat it.
-- Order of experiments: broad cheap tests first (fast algorithms, standard features), expensive setups later.
-- Deep learning is needed only for unstructured data (images, audio, text) or large complex sequences. Tabular data usually favors tree ensembles.
-
-YOU MAY:
-- Recommend fewer splits or single split if dataset size or compute makes full cross-validation prohibitively slow.
-- Disagree with ambitious modeling up-front and insist on a fast baseline first.
-
 OUTPUT:
-Provide a JSON object with:
-- thinking: 3-5 sentences analyzing the task, test differences, validation risks, and compute budget.
+Return JSON with exactly these fields in order:
+- thinking: 3-5 sentences analyzing the train-to-test split mechanism, leakage risks, metric geometry, and multi-family ensemble strategy.
+- validation_reason: one clear sentence explaining why this split scheme mirrors the test set and prevents leakage.
 - validation_scheme: one of "kfold", "stratified_kfold", "group_kfold", "time_split", "single_split", "repeated_seeds".
-- validation_reason: why this scheme fits the data structure and prevents leakage.
-- baseline_description: simplest sensible first model and input preparation.
-- target_score: target score if requested by user, else null.
-- use_gpu: true only if deep learning is needed and GPU is available.
-- risks: list of up to 5 project-specific risks and mitigations.
-- playbook: guidance lines covering model families, input prep, metric quirks, and round spending."""
+- group_or_time_column: exact column name (or derived prefix rule like "PassengerId prefix before '_'") used for group_kfold or time_split, else empty string.
+- baseline_description: fast, reliable Round 1 baseline model family and objective function.
+- planned_model_families: ordered list of 3-4 distinct model families to explore for ensemble diversity.
+- metric_post_processing: exact post-processing rule (threshold tuning, probability clipping, target log1p/expm1, or rank averaging) for the primary metric.
+- target_score: numeric goal if requested by user, else null.
+- use_gpu: boolean, true only if deep learning is needed and GPU is available.
+- risks: list of up to 5 project-specific leakage, overfitting, or submission risks and their mitigations.
+- playbook: 6-8 concise, high-impact guidance lines covering Round 1 foundation features, Round 2+ interactions, model family sequence, and metric handling."""
 
 
 class PlanDraft(BaseModel):
     thinking: str = ""
-    validation_scheme: ValidationScheme = "kfold"
     validation_reason: str = ""
+    validation_scheme: ValidationScheme = "kfold"
+    group_or_time_column: str = ""
     baseline_description: str = ""
+    planned_model_families: list[str] = []
+    metric_post_processing: str = ""
     target_score: float | None = None
     use_gpu: bool = False
     risks: list[str] = []
@@ -102,6 +135,9 @@ def run_ml_lead(ledger: Ledger, agent_context: AgentContext) -> ExperimentPlan:
         use_gpu=use_gpu,
         risks=draft.risks[:5],
         playbook=shorten_text(draft.playbook.strip(), 1200),
+        group_or_time_column=draft.group_or_time_column.strip(),
+        metric_post_processing=draft.metric_post_processing.strip(),
+        planned_model_families=draft.planned_model_families,
     )
 
     # Step 2: Ask Coder to create splits.json
@@ -111,12 +147,22 @@ def run_ml_lead(ledger: Ledger, agent_context: AgentContext) -> ExperimentPlan:
     task_text = (
         f"Create the validation splits for this project and save as JSON to {splits_file}.\n"
         f"Scheme: {plan.validation_scheme}. Reason: {plan.validation_reason}\n"
+        f"Group or Time column/rule: {plan.group_or_time_column or 'none'}\n"
+        f"Target column: {ledger.brief.target or 'none'}, ID column: {ledger.brief.id_column or 'none'}\n"
+        f"Brief group_columns: {ledger.brief.group_columns}, time_columns: {ledger.brief.time_columns}\n"
         f"Structure from EDA: {hint_text}\n"
         f"Random seed: {RANDOM_SEED}. Default splits: {DEFAULT_SPLIT_COUNT}.\n"
         f"Project folder: {workspace.project_folder}\n"
-        f"Rules: List each training example once (row index for table, relative path for files). "
-        f"Holdout: hold out ~{int(HOLDOUT_FRACTION * 100)}% (fold -1) if >= {MIN_EXAMPLES_FOR_HOLDOUT} examples.\n"
-        f"Do not exceed {BIG_FILE_MB} MB in memory at once.\n\n"
+        "SPLIT & HOLDOUT INTEGRITY RULES:\n"
+        "1. List each training example once (0-indexed row position for tables, relative path for file datasets).\n"
+        f"2. Holdout: if total examples >= {MIN_EXAMPLES_FOR_HOLDOUT}, assign ~{int(HOLDOUT_FRACTION * 100)}% of examples to `fold = -1` (holdout) "
+        f"and split the remaining ~{100 - int(HOLDOUT_FRACTION * 100)}% into CV folds `0 .. n_splits - 1`.\n"
+        "3. CRITICAL LEAK PREVENTION FOR HOLDOUT (`fold = -1`) AND CV FOLDS:\n"
+        "   - If scheme is `group_kfold`: extract the group key (if `group_or_time_column` is a composite ID like `PassengerId`, extract the prefix before `_` or `/` as specified). "
+        "Hold out ~10% of GROUPS as `fold = -1` and use `StratifiedGroupKFold` (for classification) or `GroupKFold` on the remaining 90% of groups so ZERO groups overlap between CV folds and holdout!\n"
+        "   - If scheme is `time_split`: sort by the time column; assign the latest ~10% of examples in time to `fold = -1`, and split the earlier 90% chronologically into folds `0 .. n_splits - 1`.\n"
+        "   - If scheme is `stratified_kfold`: preserve target class ratios (or binned target quantiles for continuous targets) across both `fold = -1` and folds `0 .. n_splits - 1`.\n"
+        f"4. Do not exceed {BIG_FILE_MB} MB in memory at once.\n\n"
         f"{SPLITS_FORMAT_TEXT}"
     )
 

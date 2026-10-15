@@ -12,14 +12,14 @@ if TYPE_CHECKING:
 
 DIGEST_CHAR_LIMITS: dict[str, int] = {
     "data_engineer": 8500,
-    "data_analyst": 5000,
-    "ml_lead": 4500,
-    "feature_engineer": 16000,
-    "modeler": 7000,
-    "evaluator": 5500,
-    "tuner": 5500,
-    "reviewer": 6000,
-    "submitter": 4000,
+    "data_analyst": 7000,
+    "ml_lead": 6000,
+    "feature_engineer": 14000,
+    "modeler": 8000,
+    "evaluator": 6000,
+    "tuner": 6000,
+    "reviewer": 8000,
+    "submitter": 5000,
     "coder": 8000,
 }
 
@@ -113,6 +113,12 @@ def build_task_brief_items(ledger: Ledger) -> list[str]:
             items.append(f"- file: {f.path} ({f.kind}, {f.role}, {f.size_mb:.1f} MB){cols_note}")
         if len(brief.files) > 10:
             items.append(f"- ... and {len(brief.files) - 10} more files")
+        if brief.group_columns:
+            items.append(f"Group columns: {', '.join(brief.group_columns)}")
+        if brief.time_columns:
+            items.append(f"Time columns: {', '.join(brief.time_columns)}")
+        if brief.text_columns:
+            items.append(f"Text columns: {', '.join(brief.text_columns)}")
         if brief.open_questions:
             items.append(f"Open questions: {'; '.join(brief.open_questions)}")
     return items
@@ -123,6 +129,10 @@ def build_eda_items(ledger: Ledger) -> list[str]:
     items: list[str] = []
     if eda.summary:
         items.append(f"EDA Summary: {eda.summary}")
+    if eda.train_test_shift:
+        items.append(f"Train/test shift: {eda.train_test_shift}")
+    if eda.raw_columns_to_keep:
+        items.append(f"Raw columns to keep: {', '.join(eda.raw_columns_to_keep)}")
     sorted_findings = sorted(eda.findings, key=lambda f: PRIORITY_ORDER.get(f.priority, 1))
     for f in sorted_findings[:12]:
         items.append(f"- {f.finding_id} [{f.priority}] {f.statement} -> {f.implication}")
@@ -154,8 +164,14 @@ def build_plan_items(ledger: Ledger) -> list[str]:
     items.append(f"Validation scheme: {val_text}")
     if plan.splits_path:
         items.append(f"Splits path: {plan.splits_path}")
+    if plan.group_or_time_column:
+        items.append(f"Group/time split column: {plan.group_or_time_column}")
     if plan.baseline_description:
         items.append(f"Baseline: {plan.baseline_description}")
+    if plan.planned_model_families:
+        items.append(f"Planned model families: {', '.join(plan.planned_model_families)}")
+    if plan.metric_post_processing:
+        items.append(f"Metric post-processing: {plan.metric_post_processing}")
     items.append(f"Target score: {plan.target_score if plan.target_score is not None else 'none'}")
     items.append(f"Use GPU: {'yes' if plan.use_gpu else 'no'}")
     if plan.risks:
@@ -215,6 +231,10 @@ def build_runs_items(ledger: Ledger) -> list[str]:
     return items
 
 
+def build_family_leaderboard_items(ledger: Ledger) -> list[str]:
+    return ledger.model_family_leaderboard()
+
+
 def build_history_items(ledger: Ledger) -> list[str]:
     items: list[str] = []
     cards = ledger.round_cards()
@@ -229,8 +249,10 @@ def build_history_items(ledger: Ledger) -> list[str]:
             items.append(f"- {d}")
     if ledger.reviews:
         latest = ledger.reviews[-1]
+        verdict_str = f" [{latest.hypothesis_verdict}]" if getattr(latest, "hypothesis_verdict", None) else ""
+        bottleneck_str = f" | Bottleneck: {latest.bottleneck}" if getattr(latest, "bottleneck", None) else ""
         items.append(
-            f"LATEST REVIEW (round {latest.iteration}): chose {latest.focus}. {latest.reason}"
+            f"LATEST REVIEW (round {latest.iteration}){verdict_str}: chose {latest.focus}. {latest.reason}{bottleneck_str}"
         )
         for instr in latest.instructions:
             items.append(f"  * {instr}")
@@ -251,10 +273,11 @@ def build_digest(agent_name: str, ledger: Ledger, char_limit: int | None = None)
         sections = [
             ("PROJECT BRIEF", build_task_brief_items(ledger)),
             ("EDA FINDINGS", build_eda_items(ledger)),
+            ("BUDGET", budget_items),
             ("FEATURES", build_features_items(ledger)),
             ("RUNS", build_runs_items(ledger)),
+            ("MODEL FAMILY LEADERBOARD", build_family_leaderboard_items(ledger)),
             ("HISTORY", build_history_items(ledger)),
-            ("BUDGET", budget_items),
         ]
     elif agent_name == "data_engineer":
         sections = [("TASK", [f"USER TASK: {ledger.user_task}", f"USER METRICS: {ledger.user_metrics_text or 'not given'}"])]
@@ -275,22 +298,24 @@ def build_digest(agent_name: str, ledger: Ledger, char_limit: int | None = None)
         sections = [
             ("TASK & BRIEF", build_task_brief_items(ledger)),
             ("PLAN", build_plan_items(ledger)),
-            ("HISTORY", build_history_items(ledger)),
-            ("FEATURES", build_features_items(ledger)),
-            ("EDA FINDINGS", build_eda_items(ledger)),
-            ("RUNS", build_runs_items(ledger)),
             ("BUDGET", budget_items),
+            ("FEATURES", build_features_items(ledger)),
+            ("RUNS", build_runs_items(ledger)),
+            ("EDA FINDINGS", build_eda_items(ledger)),
+            ("MODEL FAMILY LEADERBOARD", build_family_leaderboard_items(ledger)),
+            ("HISTORY", build_history_items(ledger)),
         ]
     elif agent_name == "modeler":
         sections = [
             ("TASK & BRIEF", build_task_brief_items(ledger)),
             ("PLAN", build_plan_items(ledger)),
-            ("HISTORY", build_history_items(ledger)),
-            ("RUNS", build_runs_items(ledger)),
-            ("FEATURES", build_features_items(ledger)),
-            ("EDA HINTS", build_eda_items(ledger)),
             ("BUDGET", budget_items),
             ("MACHINE", machine_items),
+            ("EDA HINTS", build_eda_items(ledger)),
+            ("FEATURES", build_features_items(ledger)),
+            ("RUNS", build_runs_items(ledger)),
+            ("MODEL FAMILY LEADERBOARD", build_family_leaderboard_items(ledger)),
+            ("HISTORY", build_history_items(ledger)),
         ]
     elif agent_name == "evaluator":
         sections = [
@@ -305,6 +330,7 @@ def build_digest(agent_name: str, ledger: Ledger, char_limit: int | None = None)
         sections = [
             ("PLAN", build_plan_items(ledger)),
             ("RUNS", build_runs_items(ledger)),
+            ("MODEL FAMILY LEADERBOARD", build_family_leaderboard_items(ledger)),
             ("HISTORY", build_history_items(ledger)),
             ("BUDGET", budget_items),
             ("MACHINE", machine_items),

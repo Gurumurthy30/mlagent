@@ -175,6 +175,8 @@ class RunLogWriter:
         self.run_log_path = run_log_path
 
     def handle_event(self, event: AgentEvent) -> None:
+        if getattr(event, "event_type", None) == "status" or str(getattr(event, "event_type", "")) == "status":
+            return
         self.run_log_path.parent.mkdir(parents=True, exist_ok=True)
         time_text = event.created_at.isoformat(timespec="seconds")
         message = event.message.replace("\n", " ")

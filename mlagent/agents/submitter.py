@@ -39,8 +39,22 @@ class BlendResult(BaseModel):
 def pick_ensemble_runs(ledger: Ledger) -> list[ExperimentRun]:
     candidates = [run for run in ledger.approved_runs() if run.validation_predictions_path]
     higher_is_better = ledger.brief.higher_is_better
+    
+    # Pick best run per distinct model family for genuine ensemble diversity
+    best_by_family: dict[str, ExperimentRun] = {}
+    for run in candidates:
+        family = run.model_family.strip().lower()
+        curr = best_by_family.get(family)
+        if curr is None:
+            best_by_family[family] = run
+            continue
+        if run.score_mean is not None and curr.score_mean is not None:
+            is_better = run.score_mean > curr.score_mean if higher_is_better else run.score_mean < curr.score_mean
+            if is_better:
+                best_by_family[family] = run
+
     ranked = sorted(
-        candidates,
+        best_by_family.values(),
         key=lambda r: r.score_mean if r.score_mean is not None else (float("-inf") if higher_is_better else float("inf")),
         reverse=higher_is_better,
     )
@@ -70,22 +84,28 @@ def try_ensemble(
     workspace = agent_context.workspace
     direction = "higher" if ledger.brief.higher_is_better else "lower"
     run_lines = "\n".join(
-        f"- {r.experiment_id}: val={r.validation_predictions_path}, test={r.test_predictions_path}"
+        f"- {r.experiment_id} ({r.model_family}, feat_v{r.feature_version}): val={r.validation_predictions_path}, test={r.test_predictions_path}"
         for r in ensemble_runs
     )
 
     task_text = (
-        f"Blend the predictions of these approved runs and score on validation splits:\n"
+        f"Blend the out-of-fold and test predictions of these diverse approved runs in ONE script:\n"
         f"{run_lines}\n\n"
         f"Splits file: {workspace.splits_path}\n"
         f"Primary metric: {ledger.brief.primary_metric} ({direction} is better)\n"
         f"Deliverable format: {ledger.brief.deliverable_format}\n"
         f"Project folder: {workspace.project_folder}\n"
         f"Write blended test predictions inside {workspace.artifacts_folder / AGENT_KEY}.\n\n"
-        "Instructions:\n"
-        "- Use `from mlagent_tools import load_splits, load_val_preds_with_labels`.\n"
-        "- Average probabilities or values across runs.\n"
-        "- Return JSON BLEND with validation_scores, test_predictions_path, method.\n\n"
+        "GRANDMASTER ENSEMBLING PROTOCOL:\n"
+        "1. SPLIT CONSISTENCY: Verify all runs use identical validation splits from `splits.json`.\n"
+        "2. METRIC-ALIGNED BLENDING METHOD:\n"
+        "   - Use `from mlagent_tools import load_splits, load_val_preds_with_labels`.\n"
+        "   - Classification / Probabilities (`roc_auc`, `log_loss`, `pr_auc`): blend predicted probabilities (`proba_*` or continuous predictions) via convex optimization (`scipy.optimize.minimize`, weights sum to 1, weights >= 0) or rank-averaging (`scipy.stats.rankdata`) on out-of-fold validation splits.\n"
+        "   - Threshold Metrics (`f1`, `accuracy`, `mcc`, `qwk`): blend probabilities first, then optimize the classification decision threshold(s) strictly on out-of-fold predictions.\n"
+        "   - Regression (`rmse`, `rmsle`, `mae`): blend continuous predictions with optimized weights on OOF.\n"
+        "3. STRICT OOF-ONLY OPTIMIZATION: Never tune ensemble weights or thresholds on the test set.\n"
+        "4. IDENTICAL TEST APPLICATION: Apply the exact same OOF-optimized weights and thresholds to the test set predictions.\n"
+        "5. DELIVERABLE & RESULT CONTRACT: Verify output matches deliverable format, row count, and column names exactly. Return JSON BLEND with `validation_scores` (per CV fold), `test_predictions_path`, and `method`.\n\n"
         f"{VALIDATION_PREDICTIONS_FORMAT_TEXT}\n\n"
         f"{SPLITS_FORMAT_TEXT}"
     )

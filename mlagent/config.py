@@ -118,7 +118,7 @@ class LimitsConfig(BaseModel):
         description="Execution time limit for a single script run in minutes",
     )
     max_code_attempts: int = Field(
-        default=4,
+        default=5,
         ge=1,
         le=10,
         description="Maximum retry attempts for Coder to fix script errors",
@@ -191,28 +191,28 @@ class ContextConfig(BaseModel):
         default=8500, ge=1000, le=64000, description="Digest character budget for Data Engineer"
     )
     data_analyst: int = Field(
-        default=5000, ge=1000, le=64000, description="Digest character budget for Data Analyst"
+        default=7000, ge=1000, le=64000, description="Digest character budget for Data Analyst"
     )
     ml_lead: int = Field(
-        default=4500, ge=1000, le=64000, description="Digest character budget for ML Lead"
+        default=6000, ge=1000, le=64000, description="Digest character budget for ML Lead"
     )
     feature_engineer: int = Field(
-        default=16000, ge=2000, le=128000, description="Digest character budget for Feature Engineer"
+        default=14000, ge=2000, le=128000, description="Digest character budget for Feature Engineer"
     )
     modeler: int = Field(
-        default=7000, ge=1000, le=64000, description="Digest character budget for Modeler"
+        default=8000, ge=1000, le=64000, description="Digest character budget for Modeler"
     )
     evaluator: int = Field(
-        default=5500, ge=1000, le=64000, description="Digest character budget for Evaluator"
+        default=6000, ge=1000, le=64000, description="Digest character budget for Evaluator"
     )
     tuner: int = Field(
-        default=5500, ge=1000, le=64000, description="Digest character budget for Tuner"
+        default=6000, ge=1000, le=64000, description="Digest character budget for Tuner"
     )
     reviewer: int = Field(
-        default=5500, ge=1000, le=64000, description="Digest character budget for Reviewer"
+        default=8000, ge=1000, le=64000, description="Digest character budget for Reviewer"
     )
     submitter: int = Field(
-        default=4000, ge=1000, le=64000, description="Digest character budget for Submitter"
+        default=5000, ge=1000, le=64000, description="Digest character budget for Submitter"
     )
     coder: int = Field(
         default=8000, ge=1000, le=64000, description="Digest character budget for Coder"

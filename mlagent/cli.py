@@ -3,6 +3,8 @@
 This file only talks to the user and wires the parts together. All the work happens in the graph.
 """
 
+from __future__ import annotations
+
 import argparse
 from collections.abc import Callable
 from pathlib import Path
@@ -12,14 +14,15 @@ from mlagent.agents.base import AgentContext
 from mlagent.code_runner import CodeRunner
 from mlagent.config import (
     DEFAULT_CONFIG_TEXT,
+    AppConfig,
     ConfigError,
+    UiConfig,
     get_effective_config_details,
     load_or_create_config,
 )
 from mlagent.console_ui import ConsoleUI
 from mlagent.environment_probe import (
     EnvironmentInfo,
-    environment_to_text,
     probe_environment,
     save_environment,
 )
@@ -35,6 +38,14 @@ from mlagent.memory import (
     save_ledger,
 )
 from mlagent.state import Ledger
+from mlagent.summary import (
+    get_symbols,
+    get_theme,
+    is_plain_mode,
+    render_confirmation_panel,
+    render_environment_table,
+    render_summary_panel,
+)
 
 EXIT_OK = 0
 EXIT_PROBLEM = 1
@@ -51,36 +62,22 @@ LlmClientFactory = Callable[..., LlmClient]
 
 
 def ask_required_text(ui: ConsoleUI, question: str) -> str:
-    while True:
-        answer = ui.ask_text(question).strip()
-        if answer:
-            return answer
-        ui.show_message("Please type something.", style="yellow")
+    """Prompt user for required text and reject empty answers."""
+    return ui.ask_required_task(question)
 
 
-def show_final_summary(ui: ConsoleUI, ledger: Ledger, workspace: Workspace) -> None:
-    if ledger.status == "failed":
-        ui.show_message("The run failed.", style="bold red")
-    else:
-        ui.show_message(f"Finished. Stop reason: {ledger.stop_reason}.", style="bold green")
-        if ledger.error_message:
-            ui.show_message(f"The run ended early: {ledger.error_message}", style="yellow")
-
+def show_final_summary(
+    ui: ConsoleUI,
+    ledger: Ledger,
+    config: AppConfig | None = None,
+    workspace: Workspace | None = None,
+) -> None:
+    """Render the final summary panel and headline without LLM calls."""
+    ui_config = config.ui if config is not None else ui.config
+    summary_panel = render_summary_panel(ledger, ui_config)
+    ui.console.print(summary_panel)
     if ledger.final.headline:
-        ui.show_message(ledger.final.headline, style="bold cyan")
-    best_run = ledger.best_approved_run()
-    if best_run is not None:
-        ui.show_message(
-            f"Best result: {best_run.experiment_id} ({best_run.model_family}), "
-            f"{ledger.brief.primary_metric or 'score'} {best_run.score_mean:.4f}"
-        )
-    if ledger.final.predictions_path:
-        ui.show_message(f"Predictions: {ledger.final.predictions_path}")
-        for message in ledger.final.check_messages:
-            ui.show_message(f"  {message}")
-    if ledger.final.report_path:
-        ui.show_message(f"Report: {ledger.final.report_path}")
-    ui.show_message(f"Memory, logs and artifacts are in {workspace.root}")
+        ui.show_message(ledger.final.headline, style=f"bold {ui.theme.accent}")
 
 
 def decide_exit_code(ledger: Ledger) -> int:
@@ -116,12 +113,11 @@ def load_or_start_ledger(ui: ConsoleUI, workspace: Workspace, resuming: bool) ->
             )
         return ledger
 
-    user_task = ask_required_text(ui, TASK_QUESTION)
+    user_task = ui.ask_required_task(TASK_QUESTION)
     user_metrics_text = ui.ask_text(METRICS_QUESTION).strip()
     ledger = create_new_ledger(user_task, user_metrics_text)
     save_ledger(workspace, ledger)
     return ledger
-
 
 
 def init_config_command(output: str | None, force: bool, ui: ConsoleUI) -> int:
@@ -171,6 +167,68 @@ def config_command(config_path_str: str | None, overrides: list[str], ui: Consol
     return EXIT_OK
 
 
+def status_command(
+    project_folder: Path,
+    ui: ConsoleUI,
+    config_path: Path | None = None,
+    overrides: list[str] | None = None,
+) -> int:
+    """Render progress and summary view from a run's saved ledger without disturbing a running process."""
+    workspace = Workspace(project_folder)
+    if not workspace.exists() or not workspace.has_saved_ledger():
+        ui.show_message(
+            f"No saved run found in {workspace.root}. Start a project with `mlagent start`.",
+            style=ui.theme.warn,
+        )
+        return EXIT_OK
+
+    cfg_file = config_path if config_path is not None else workspace.config_path
+    try:
+        config = load_or_create_config(cfg_file, overrides=overrides)
+    except ConfigError as error:
+        ui.show_message(str(error), style="bold red")
+        return EXIT_USAGE
+
+    ui.config = config.ui
+    ui.theme = get_theme(config.ui.theme)
+    ui.symbols = get_symbols(config.ui.ascii_only)
+    ui._is_plain = is_plain_mode(config.ui, ui.console)
+
+    ledger = load_ledger(workspace)
+    show_final_summary(ui, ledger, config, workspace)
+    return decide_exit_code(ledger)
+
+
+def resume_command(
+    project_folder: Path,
+    ui: ConsoleUI,
+    create_llm_client: LlmClientFactory = LlmClient,
+    probe: Callable[[], EnvironmentInfo] = probe_environment,
+    config_path: Path | None = None,
+    overrides: list[str] | None = None,
+    debug: bool = False,
+) -> int:
+    """Resume a saved run directly without prompting."""
+    workspace = Workspace(project_folder)
+    if not workspace.exists() or not workspace.has_saved_ledger():
+        ui.show_message(
+            f"No saved run found in {workspace.root}. Use `mlagent start` to start a new project.",
+            style="bold red",
+        )
+        return EXIT_USAGE
+
+    return start_command(
+        project_folder=project_folder,
+        ui=ui,
+        create_llm_client=create_llm_client,
+        probe=probe,
+        config_path=config_path,
+        overrides=overrides,
+        force_resume=True,
+        debug=debug,
+    )
+
+
 def start_command(
     project_folder: Path,
     ui: ConsoleUI,
@@ -178,17 +236,33 @@ def start_command(
     probe: Callable[[], EnvironmentInfo] = probe_environment,
     config_path: Path | None = None,
     overrides: list[str] | None = None,
+    force_resume: bool = False,
+    debug: bool = False,
 ) -> int:
     workspace = Workspace(project_folder)
-    resuming = prepare_workspace(ui, workspace)
+    ui.show_header(__version__)
+
+    resuming = False
+    if force_resume:
+        resuming = True
+        workspace.create_folders()
+    else:
+        resuming = prepare_workspace(ui, workspace)
 
     cfg_file = config_path if config_path is not None else workspace.config_path
     config_is_new = not cfg_file.exists()
     try:
         config = load_or_create_config(cfg_file, overrides=overrides)
     except ConfigError as error:
-        ui.show_message(str(error), style="bold red")
+        ui.show_message(f"Config error: {error}", style="bold red")
         return EXIT_USAGE
+
+    # Update UI with loaded config
+    ui.config = config.ui
+    ui.theme = get_theme(config.ui.theme)
+    ui.symbols = get_symbols(config.ui.ascii_only)
+    ui._is_plain = is_plain_mode(config.ui, ui.console)
+
     if config_is_new:
         ui.show_message(f"Created {cfg_file}. Edit it to change the model or limits.")
 
@@ -196,18 +270,33 @@ def start_command(
     event_bus.subscribe(ui.handle_event)
     event_bus.subscribe(RunLogWriter(workspace.run_log_path).handle_event)
 
-    ui.show_message("Checking this machine...")
+    # 1. Environment Check
     environment = probe()
     save_environment(environment, workspace.environment_path)
-    ui.show_message(environment_to_text(environment))
+    if config.ui.show_environment:
+        env_table = render_environment_table(
+            environment, config.ui, low_ram_warning_gb=config.machine.low_ram_warning_gb
+        )
+        ui.console.print(env_table)
 
+    # 2. LLM Readiness Check
     llm_client = create_llm_client(config.llm, workspace, event_bus)
     try:
         llm_client.check_ready()
     except LlmUnavailableError as error:
-        ui.show_message(str(error), style="bold red")
+        err_text = str(error)
+        model_name = config.llm.name
+        base_url = config.llm.base_url
+        if "not pulled" in err_text or "not available" in err_text:
+            advice = f"Pull the model first: ollama pull {model_name}"
+        else:
+            advice = f"Make sure Ollama is running at {base_url} (start it with `ollama serve`)."
+        ui.show_message(f"LLM Unavailable: {err_text}", style="bold red")
+        ui.show_message(f"  {advice}")
+        ui.show_message(f"  Log file: {workspace.logs_folder}")
         return EXIT_USAGE
 
+    # 3. Ledger Setup
     try:
         ledger = load_or_start_ledger(ui, workspace, resuming)
     except LedgerLoadError as error:
@@ -219,8 +308,25 @@ def start_command(
 
     if ledger.status == "done":
         ui.show_message("This run already finished.")
-        show_final_summary(ui, ledger, workspace)
+        show_final_summary(ui, ledger, config, workspace)
         return decide_exit_code(ledger)
+
+    # 4. Confirmation Panel ("What I will do")
+    if not resuming and config.ui.confirm_before_start:
+        conf_panel = render_confirmation_panel(
+            task=ledger.user_task,
+            metrics=ledger.user_metrics_text,
+            data_folder=workspace.project_folder,
+            limits=config.limits,
+            workspace_folder=workspace.root,
+            model_name=config.llm.name,
+            config=config.ui,
+        )
+        ui.console.print(conf_panel)
+        if not ui.ask_confirm("Start?"):
+            ui.show_message("Aborted by user.")
+            return EXIT_OK
+
     if resuming:
         ui.show_message(f"Resuming the saved run at: {ledger.phase}.")
 
@@ -232,22 +338,52 @@ def start_command(
         code_runner=CodeRunner(workspace, config.limits.code_timeout_minutes * 60),
         environment=environment,
     )
+
+    # 5. Run Pipeline with Live Status Display
+    ui.start_live()
+    ui.update_ledger(ledger)
     try:
         final_ledger = run_pipeline(ledger, agent_context)
     except KeyboardInterrupt:
+        ui.stop_live()
         ui.show_message(
-            "Stopped. Run `mlagent start` again and choose resume to continue.", style="yellow"
+            "Stopped. State is saved; run `mlagent resume` to continue.",
+            style="yellow",
         )
         return EXIT_INTERRUPTED
-    except Exception:
+    except Exception as err:
+        ui.stop_live()
+        if debug:
+            import traceback
+            traceback.print_exc()
         ui.show_message(
-            f"The run stopped on an unexpected error. See {workspace.logs_folder}.",
+            f"The run stopped on an unexpected error: {err}. See {workspace.logs_folder}.",
             style="bold red",
         )
         return EXIT_PROBLEM
+    finally:
+        ui.stop_live()
 
-    show_final_summary(ui, final_ledger, workspace)
+    show_final_summary(ui, final_ledger, config, workspace)
     return decide_exit_code(final_ledger)
+
+
+def flags_to_overrides(args: argparse.Namespace) -> list[str]:
+    """Map command line flags to config override key paths."""
+    ov: list[str] = list(getattr(args, "overrides", []) or [])
+    if getattr(args, "verbose", False):
+        ov.append("ui.verbosity=detailed")
+    elif getattr(args, "quiet", False):
+        ov.append("ui.verbosity=quiet")
+    if getattr(args, "plain", False):
+        ov.append("ui.mode=plain")
+    if getattr(args, "no_color", False):
+        ov.append("ui.theme=mono")
+    if getattr(args, "theme", None):
+        ov.append(f"ui.theme={args.theme}")
+    if getattr(args, "yes", False):
+        ov.append("ui.confirm_before_start=false")
+    return ov
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -256,36 +392,73 @@ def main(argv: list[str] | None = None) -> int:
         description="A multi-agent system that runs a machine learning project end to end.",
     )
     parser.add_argument("--version", action="version", version=f"mlagent {__version__}")
-    subparsers = parser.add_subparsers(dest="command")
 
-    start_parser = subparsers.add_parser("start", help="Run the agents on the ML project in this folder.")
-    start_parser.add_argument("--config", type=str, default=None, help="Path to config.yaml file")
-    start_parser.add_argument(
+    common_parser = argparse.ArgumentParser(add_help=False)
+    common_parser.add_argument("--config", type=str, default=None, help="Path to config.yaml file")
+    common_parser.add_argument(
         "--set",
         dest="overrides",
         action="append",
         default=[],
         help="Override a config setting, e.g. --set limits.max_eda_loops=6",
     )
+    common_parser.add_argument("-v", "--verbose", action="store_true", help="Detailed verbosity including code runs")
+    common_parser.add_argument("-q", "--quiet", action="store_true", help="Quiet verbosity")
+    common_parser.add_argument("--plain", action="store_true", help="Force plain terminal output mode")
+    common_parser.add_argument("--no-color", action="store_true", help="Monochrome theme without ANSI colors")
+    common_parser.add_argument("--theme", choices=["dark", "light", "mono"], default=None, help="Color theme")
+    common_parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
+    common_parser.add_argument("--debug", action="store_true", help="Show full stack traces on unexpected errors")
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    # start
+    start_parser = subparsers.add_parser(
+        "start",
+        parents=[common_parser],
+        help="Run the agents on the ML project in this folder.",
+    )
     start_parser.add_argument("folder", nargs="?", default=".", help="Project folder path")
 
+    # resume
+    resume_parser = subparsers.add_parser(
+        "resume",
+        parents=[common_parser],
+        help="Resume a saved run directly without prompting.",
+    )
+    resume_parser.add_argument("folder", nargs="?", default=".", help="Project folder path")
+
+    # status
+    status_parser = subparsers.add_parser(
+        "status",
+        parents=[common_parser],
+        help="Display progress and summary view from a run's saved ledger.",
+    )
+    status_parser.add_argument("folder", nargs="?", default=".", help="Project folder path")
+
+    # init-config
     init_parser = subparsers.add_parser("init-config", help="Write a default config.yaml with documentation.")
     init_parser.add_argument("--output", type=str, default=None, help="Output config path (default: config.yaml)")
     init_parser.add_argument("--force", action="store_true", help="Overwrite existing config file if present")
 
-    cfg_parser = subparsers.add_parser("config", help="Display effective configuration and sources.")
-    cfg_parser.add_argument("--config", type=str, default=None, help="Path to config.yaml file")
-    cfg_parser.add_argument(
-        "--set",
-        dest="overrides",
-        action="append",
-        default=[],
-        help="Override a config setting, e.g. --set limits.max_eda_loops=6",
+    # config
+    subparsers.add_parser(
+        "config",
+        parents=[common_parser],
+        help="Display effective configuration and sources.",
     )
 
     arguments = parser.parse_args(argv)
 
-    ui = ConsoleUI()
+    # Pre-configure UI with CLI flags
+    init_ui_cfg = UiConfig(
+        mode="plain" if getattr(arguments, "plain", False) else "auto",
+        theme="mono" if getattr(arguments, "no_color", False) else (getattr(arguments, "theme", None) or "dark"),
+        verbosity="detailed" if getattr(arguments, "verbose", False) else ("quiet" if getattr(arguments, "quiet", False) else "normal"),
+    )
+    ui = ConsoleUI(config=init_ui_cfg)
+    overrides = flags_to_overrides(arguments)
+
     if arguments.command == "start":
         cfg_path = Path(arguments.config) if arguments.config else None
         target_folder = Path(arguments.folder).resolve()
@@ -293,12 +466,32 @@ def main(argv: list[str] | None = None) -> int:
             target_folder,
             ui,
             config_path=cfg_path,
-            overrides=arguments.overrides,
+            overrides=overrides,
+            debug=arguments.debug,
+        )
+    if arguments.command == "resume":
+        cfg_path = Path(arguments.config) if arguments.config else None
+        target_folder = Path(arguments.folder).resolve()
+        return resume_command(
+            target_folder,
+            ui,
+            config_path=cfg_path,
+            overrides=overrides,
+            debug=arguments.debug,
+        )
+    if arguments.command == "status":
+        cfg_path = Path(arguments.config) if arguments.config else None
+        target_folder = Path(arguments.folder).resolve()
+        return status_command(
+            target_folder,
+            ui,
+            config_path=cfg_path,
+            overrides=overrides,
         )
     if arguments.command == "init-config":
         return init_config_command(arguments.output, arguments.force, ui)
     if arguments.command == "config":
-        return config_command(arguments.config, arguments.overrides, ui)
+        return config_command(arguments.config, overrides, ui)
 
     parser.print_help()
     return EXIT_USAGE

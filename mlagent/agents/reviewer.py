@@ -7,12 +7,13 @@ Final: writes the comprehensive final report from the team's entire trajectory.
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from pydantic import BaseModel
 
 from mlagent.agents.base import AgentContext, facts_to_text
 from mlagent.agents.coder import run_coder
-from mlagent.digest import build_digest, build_report_facts
+from mlagent.digest import build_digest, build_report_facts, shorten_text
 from mlagent.events import EventType
 from mlagent.script_contract import SPLITS_FORMAT_TEXT, VALIDATION_PREDICTIONS_FORMAT_TEXT
 from mlagent.settings import MAX_REVIEW_INSTRUCTIONS
@@ -29,12 +30,39 @@ DIAG_RESULT_KEYS = """\
 - "notes": short observations covering split spread, holdout gap, and prediction properties"""
 
 REVIEW_PROMPT = """\
-You are the Reviewer of an autonomous ML team, the senior engineer deciding what the team does next.
-The next agent only sees your instructions or question. Include exact numbers, segment names, and actions.
+You are the Reviewer of an autonomous Kaggle Grandmaster ML team, the senior engineer steering the iterative development \
+loop. The next agent receives ONLY your instructions or question—make them concrete, actionable, and \
+completely self-contained.
 
-GOAL:
-Determine the highest-leverage focus for the next round (features, model, tune, data, or finish)
-and summarize the lesson learned this round.
+DECISION RULES (in priority order):
+1. TREE-SEARCH ROUTING & PORTFOLIO EXPLORATION:
+   - Check the `MODEL FAMILY LEADERBOARD` and `planned_model_families` in SITUATION: if distinct model families \
+from the plan have not yet been trained, prioritize `model` exploration before tuning or adding more features.
+   - "features": If feature version is stable and model performance is bottlenecked by specific subgroups, error segments, \
+or unexploited EDA feature ideas. Instruct Feature Engineer with exact column names and mathematical transforms.
+   - "model": If feature version was upgraded or current model family has plateaued, switch to an untried model family \
+(`lightgbm` -> `catboost` -> `xgboost` -> `ridge`/`mlp`) to build ensemble diversity.
+   - "tune": If a top-performing model family is established, features are stable, and hyperparameters have never been searched.
+   - "data": If cross-validation behavior is erratic, holdout gap is large, or performance plateaued across 2 rounds without \
+counted gain, reopen EDA to inspect worst out-of-fold errors in `val_predictions.csv`.
+   - "finish": Only when improvements have saturated cleanly across multiple model families and minimum rounds are completed.
+2. HYPOTHESIS LEDGER & LESSON RECORDING (`hypothesis_verdict`):
+   - Explicitly classify the latest round's experiment as `validated` (kept), `refuted` (clean run, no CV gain—do not repeat), \
+`bug` (script crashed or failed verification—repaired), or `baseline`.
+   - Record one crisp sentence in `lesson` stating what empirical fact this round established.
+3. STANDALONE, ACTIONABLE INSTRUCTIONS:
+   - Instructions must name exact column operations, formulas, or model hyperparameters. Never give generic advice.
+
+WORKED EXAMPLE (Focus: Model):
+- assessment: "Feature v2 added group aggregations and improved LightGBM CV to 0.8120 (+0.0078 gain). However, CatBoost and XGBoost have not been explored yet, limiting ensemble diversity."
+- bottleneck: "Single model family reliance on LightGBM; need diverse gradient boosting tree structures."
+- hypothesis_verdict: "validated"
+- lesson: "Group-level luxury spending aggregations successfully resolved the multi-passenger error segment."
+- reason: "Explore untried model family CatBoost on features v2 to establish cross-family ensemble diversity."
+- focus: "model"
+- instructions: ["Train a CatBoostClassifier with depth=6, iterations=1500, learning_rate=0.04 using features v2.", \
+"Apply out-of-fold threshold tuning to maximize primary_metric."]
+- question: ""
 
 SITUATION:
 {digest}
@@ -42,33 +70,25 @@ SITUATION:
 DIAGNOSIS OF THE BEST RUN:
 {diagnosis_text}
 
-HOW TO THINK:
-- Before choosing a focus, check if a high-priority EDA finding or untried feature idea remains unacted upon; it can yield higher gain than another model change.
-- If error is concentrated in specific classes, groups, or ranges: focus on "features" targeting those segments.
-- If features gave no gain repeatedly, or model is under-fitting globally: focus on "model" with a distinct family.
-- If a strong model family has stable features and parameters were never searched: focus on "tune".
-- If validation behavior is anomalous or reveals an uninspected data issue: focus on "data" with a concrete question.
-- If improvements have plateaued and minimum rounds are completed: focus on "finish".
-
-YOU MAY:
-- Reopen data analysis ("data") if you have a specific testable question.
-- Recommend finishing early if performance has saturated cleanly.
-
 OUTPUT:
-Return JSON:
-- assessment: 3-5 sentences diagnosing current bottlenecks and trajectory.
-- lesson: one sentence stating what this round taught the team.
+Return JSON with exactly these fields in order:
+- assessment: 3-5 sentences diagnosing current performance, trajectory, and progress against compute budget.
+- bottleneck: the specific error segment, fold instability, or pipeline limitation identified.
+- hypothesis_verdict: one of "validated", "refuted", "bug", "baseline".
+- lesson: exactly one sentence stating what this round taught the team.
+- reason: one clear sentence explaining why this focus is the highest-leverage next step.
 - focus: one of "features", "model", "tune", "data", "finish".
-- reason: one sentence explaining why this focus is chosen.
-- instructions: list of up to 5 concrete action points for the next agent (empty for finish or data).
-- question: specific data question (only when focus is "data")."""
+- instructions: list of up to 5 self-contained, concrete instructions for the next agent (empty for "finish" or "data").
+- question: specific data question (required ONLY if focus is "data", otherwise "")."""
 
 
 class ReviewDraft(BaseModel):
     assessment: str = ""
+    bottleneck: str = ""
+    hypothesis_verdict: Literal["validated", "refuted", "bug", "baseline"] = "baseline"
     lesson: str = ""
-    focus: ReviewFocus = "features"
     reason: str = ""
+    focus: ReviewFocus = "features"
     instructions: list[str] = []
     question: str = ""
 
@@ -165,6 +185,8 @@ def run_reviewer(ledger: Ledger, agent_context: AgentContext) -> Review:
         iteration=next_iteration,
         best_experiment_id=best_run.experiment_id if best_run else "",
         assessment=draft.assessment,
+        bottleneck=draft.bottleneck,
+        hypothesis_verdict=draft.hypothesis_verdict,
         focus=draft.focus,
         reason=draft.reason,
         instructions=draft.instructions[:MAX_REVIEW_INSTRUCTIONS],
@@ -174,7 +196,8 @@ def run_reviewer(ledger: Ledger, agent_context: AgentContext) -> Review:
     )
 
     review = apply_reviewer_guards(ledger, review)
-    event_bus.emit(EventType.DECISION, AGENT_NAME, f"next focus: {review.focus}. {review.reason}")
+    short_reason = shorten_text(review.reason, 120)
+    event_bus.emit(EventType.DECISION, AGENT_NAME, f"next = {review.focus}. Why: {short_reason}")
     if review.guard_note:
         event_bus.emit(EventType.WARNING, AGENT_NAME, review.guard_note)
     event_bus.emit(EventType.AGENT_FINISHED, AGENT_NAME, f"round {reviewed_round} reviewed")

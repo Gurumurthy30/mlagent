@@ -38,12 +38,33 @@ CHECKS_RESULT_KEYS = """\
 - "notes": list of short observations"""
 
 VERDICT_PROMPT = """\
-You are the Evaluator of an ML team. You independently verify model runs.
-You never see the Modeler's reasoning, only the verification checks.
-You do not judge model architecture choice—only whether the score is honest, reproducible, and leak-free.
+You are the Evaluator of an autonomous Kaggle Grandmaster ML team. Your purpose is independent verification: \
+auditing model runs for data leakage, split integrity, fold stability, and submission validity. \
+You do not judge model architecture taste; you judge whether the validation score and test predictions are honest, leak-free, and usable.
 
-GOAL:
-Determine if the model's performance is honest and usable, or flawed by data leakage or evaluation errors.
+DECISION RULES (in priority order):
+1. HARD REJECTION CRITERIA (reject ONLY when backed by concrete evidence in INDEPENDENT CHECKS):
+   - TRUE DATA LEAKAGE: Any "high" severity leakage flag demonstrating target leakage (e.g., target column used in features, \
+fitting target encoders/scalers on full data before splitting, or `train_validation_overlap > 0`) -> REJECT.
+   - CORRUPTED OR CONSTANT PREDICTIONS: Validation or test predictions contain `NaN`/`Inf`, have zero variance \
+(constant predictions across rows), or `test_predictions.csv` fails deliverable row-count/format checks -> REJECT.
+   - SEVERE HOLDOUT COLLAPSE: Holdout score degrades relative to CV mean well beyond cross-validation noise, proving severe validation overfitting -> REJECT.
+   - UNEXPLAINED SCORE MISMATCH: `recomputed_score` differs materially from the run's reported score beyond rounding/threshold tolerance -> REJECT.
+2. DISCERN TRUE LEAKAGE FROM LEGITIMATE DOMAIN SIGNAL:
+   - Do NOT reject a run merely because a legitimate domain feature (like `CryoSleep`, `total_spent`, or decomposed `Cabin` deck) \
+has strong predictive power, provided `fit_preparation` was fit strictly on training folds and holdout performance agrees with CV.
+   - A single "medium" or "low" flag with a sound domain explanation and consistent holdout score should be APPROVED.
+3. APPROVE HONEST REGRESSIONS:
+   - If a run is leak-free, reproducible, and produces valid predictions, APPROVE it even if its CV score is slightly lower \
+than the current best run. Honest runs from new model families (e.g. CatBoost, XGBoost, Ridge) are essential for final ensemble blending and Reviewer credit assignment!
+
+WORKED EXAMPLE:
+- Run: "experiment_003 | lightgbm | 0.9998"
+- Checks: "leakage_flags: [{{'description': 'column target_copy has AUC 1.000 and is identical to target', 'severity': 'high'}}], train_validation_overlap: 0"
+- Correct Output:
+  * thinking: "The run achieves near-perfect score 0.9998 because target_copy has AUC 1.000. This is a direct target leak."
+  * reasons: ["High leakage flag: column target_copy has AUC 1.000, leaking the ground-truth label."]
+  * verdict: "reject"
 
 SITUATION:
 {digest}
@@ -54,20 +75,10 @@ THE RUN:
 INDEPENDENT CHECKS:
 {checks_text}
 
-HOW TO THINK:
-- An honest modest score is approved; an amazing score achieved via leakage or target encoding in features must be rejected.
-- High severity leakage or train-val overlap is a strict rejection.
-- Medium flags require plausible domain explanations (e.g., legitimate pre-outcome features). Two unexplained medium flags warrant rejection.
-- A score that is completely constant across splits or identical to a trivial baseline should be examined with scrutiny.
-
-YOU MAY:
-- Approve a run whose score is lower than previous runs, provided it is methodologically sound.
-- Reject a run whose predictions are corrupted, constant, or misaligned with true labels.
-
 OUTPUT:
-Return JSON:
-- thinking: 2-4 sentences reviewing the checks.
-- reasons: list of short factual reasons citing numbers from the checks.
+Return JSON with exactly these fields in order:
+- thinking: 2-4 sentences reviewing the independent checks, comparing recomputed CV with holdout, verifying test prediction integrity, and evaluating any leakage flags.
+- reasons: list of 1 to 3 short factual sentences citing exact numbers from the checks (required for both approve and reject).
 - verdict: "approve" or "reject"."""
 
 
@@ -159,6 +170,12 @@ def run_evaluator(
     """Evaluate one run and return it with verdict, reasons, gain_vs_best, counted_gain."""
     event_bus = agent_context.event_bus
     event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, f"checking {run.experiment_id}")
+    event_bus.emit(
+        EventType.STATUS,
+        AGENT_NAME,
+        f"validating {run.experiment_id} ({run.model_family})",
+        {"reason": "running leakage checks and cross-validation verification"},
+    )
 
     # Best approved run prior to this run
     prior_approved = [
@@ -177,16 +194,26 @@ def run_evaluator(
     task_text = (
         f"Independently check the run {run.experiment_id}.\n"
         f"Run: {run.headline}\n"
+        f"Post-processing applied by run: {run.post_processing or 'none'}\n"
         f"Run script: {run.script_path}\n"
         f"Saved validation predictions: {run.validation_predictions_path}\n"
         f"Saved test predictions: {run.test_predictions_path}\n"
         f"Splits file: {workspace.splits_path}\n"
         f"Primary metric: {ledger.brief.primary_metric} ({direction} is better)\n"
+        f"Deliverable format: {ledger.brief.deliverable_format}\n"
         f"Project folder: {workspace.project_folder}\n\n"
-        "Instructions:\n"
-        "1. Recompute the primary metric on each validation split using `from mlagent_tools import load_splits, load_val_preds_with_labels`.\n"
-        "2. Recompute the score on fold -1 holdout examples if present.\n"
-        "3. Check for target leakage or train-test overlap.\n\n"
+        "VERIFICATION INSTRUCTIONS:\n"
+        "1. RECOMPUTE CV & HOLDOUT SCORES ACCURATELY:\n"
+        "   - Load `val_predictions.csv` and join with ground truth (`from mlagent_tools import load_splits, load_val_preds_with_labels`).\n"
+        "   - For probability/ranking metrics (`roc_auc`, `pr_auc`, `log_loss`, `brier_score`), compute the metric on each split (`fold >= 0`) using the `proba_*` column(s) (or `prediction` if continuous probabilities are stored there).\n"
+        "   - For discrete classification metrics (`accuracy`, `f1`, `f1_macro`, `f1_weighted`, `mcc`, `qwk`) and regression metrics (`rmse`, `rmsle`, `mae`, `r2`), compute the metric on each split (`fold >= 0`) using the `prediction` column.\n"
+        "   - Recompute `recomputed_score` (mean across CV folds `fold >= 0`) and `recomputed_holdout_score` (on `fold == -1` if present, else `null`).\n"
+        "2. CHECK TEST PREDICTIONS & SUBMISSION INTEGRITY:\n"
+        "   - Inspect `test_predictions.csv`: verify it exists, has zero `NaN`/`Inf` values, has non-zero variance (not constant predictions), and matches the test set row count.\n"
+        "   - If `test_predictions.csv` is missing, has `NaN`s, is constant, or has the wrong row count, append a `{'description': ..., 'severity': 'high'}` entry to `leakage_flags`.\n"
+        "3. AUDIT FOR TRUE DATA LEAKAGE:\n"
+        "   - Inspect `run.script_path` and predictions to verify that `fit_preparation` / encoders / target encodings were fit inside each training fold (`train_validation_overlap == 0`) and the target column was not included as an input feature.\n"
+        "   - Only flag `severity: 'high'` for genuine leakage, train/val overlap, or corrupted predictions—not for legitimate domain features.\n\n"
         f"{VALIDATION_PREDICTIONS_FORMAT_TEXT}\n\n"
         f"{SPLITS_FORMAT_TEXT}"
     )
@@ -245,4 +272,11 @@ def run_evaluator(
         run.counted_gain = False
 
     event_bus.emit(EventType.DECISION, AGENT_NAME, f"{run.experiment_id} {run.status}")
+    verdict_label = "approved" if run.approved else f"rejected ({run.verdict_reasons[0] if run.verdict_reasons else 'failed validation'})"
+    score_display = f"{run.score_mean:.4f}" if run.score_mean is not None else "no score"
+    event_bus.emit(
+        EventType.RESULT,
+        AGENT_NAME,
+        f"{run.experiment_id}: {verdict_label} — score {score_display}",
+    )
     return run

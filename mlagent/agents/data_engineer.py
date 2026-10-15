@@ -88,10 +88,15 @@ what one row means). Example: predictions.csv with columns customer_id and churn
 row of test.csv, churn is 0 or 1.
 - files: at most {max_files} entries, grouping huge folders into one entry. role is one of \
 train, test, sample_submission, description, other. For table files, include columns (up to 60 names).
+- group_columns: list of candidate group/cluster/entity ID column names (e.g. user_id, patient_id, group_id).
+- time_columns: list of date/time/timestamp column names.
+- text_columns: list of long/free text column names.
 
-Return JSON: brief (all fields), done (true when files, modality, task_family, primary_metric \
-and deliverable_format are all known), next_tasks (what the next inspection must find out: \
-each task concrete and answerable by one short script; empty when done)."""
+OUTPUT:
+Return JSON with exactly these fields in order:
+- brief: project brief object containing all fields (summary, modality, task_family, target, id_column, primary_metric, higher_is_better, extra_metrics, deliverable_format, files, group_columns, time_columns, text_columns).
+- done: true when files, modality, task_family, primary_metric and deliverable_format are all known.
+- next_tasks: list of what the next inspection must find out (each task concrete and answerable by one short script; empty when done)."""
 
 
 class BriefReading(BaseModel):

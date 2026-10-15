@@ -52,6 +52,9 @@ class ProjectBrief(BaseModel):
     deliverable_format: str = ""  # what the predictions file must look like
     has_large_files: bool = False
     open_questions: list[str] = []
+    group_columns: list[str] = []  # candidate group/entity ID columns
+    time_columns: list[str] = []  # timestamp/date columns
+    text_columns: list[str] = []  # free-text columns
 
 
 class Finding(BaseModel):
@@ -65,6 +68,8 @@ class Finding(BaseModel):
 class FeatureIdea(BaseModel):
     description: str
     finding_id: str = ""
+    family: str = ""
+    priority: Priority = "medium"
 
 
 class EdaReport(BaseModel):
@@ -78,6 +83,8 @@ class EdaReport(BaseModel):
     validation_hints: list[str] = []  # time or group structure, imbalance, ...
     model_hints: list[str] = []
     eda_loops_used: int = 0
+    train_test_shift: str = ""
+    raw_columns_to_keep: list[str] = []
 
 
 class ExperimentPlan(BaseModel):
@@ -89,6 +96,9 @@ class ExperimentPlan(BaseModel):
     use_gpu: bool = False
     risks: list[str] = []
     playbook: str = ""  # hints for this modality and task, written by the ML Lead
+    group_or_time_column: str = ""
+    metric_post_processing: str = ""
+    planned_model_families: list[str] = []
 
 
 class FeatureRecord(BaseModel):
@@ -125,6 +135,8 @@ class ExperimentRun(BaseModel):
     checks: dict = {}
     gain_vs_best: float | None = None
     counted_gain: bool = False
+    hypothesis: str = ""
+    post_processing: str = ""
 
     @property
     def validation_predictions_path(self) -> str:
@@ -185,6 +197,8 @@ class Review(BaseModel):
     question: str = ""  # only when focus is "data"
     guard_note: str = ""  # filled by code when it replaced the Reviewer's choice
     reviewed_focus: LoopFocus = "start"  # the focus of the round this review is about
+    hypothesis_verdict: Literal["validated", "refuted", "bug", "baseline"] = "baseline"
+    bottleneck: str = ""
 
 
 class FinalResult(BaseModel):
@@ -328,6 +342,46 @@ class Ledger(BaseModel):
             )
         return cards
 
+    def model_family_leaderboard(self) -> list[str]:
+        approved = self.approved_runs()
+        if not approved and not self.plan.planned_model_families:
+            return []
+        families: dict[str, list[ExperimentRun]] = {}
+        for run in approved:
+            fam = run.model_family or "unknown"
+            families.setdefault(fam, []).append(run)
+
+        higher = self.brief.higher_is_better
+        lines: list[str] = []
+
+        def _best_score(runs: list[ExperimentRun]) -> float:
+            best_run = (
+                max(runs, key=lambda r: r.score_mean if r.score_mean is not None else float("-inf"))
+                if higher
+                else min(runs, key=lambda r: r.score_mean if r.score_mean is not None else float("inf"))
+            )
+            return best_run.score_mean if best_run.score_mean is not None else (float("-inf") if higher else float("inf"))
+
+        sorted_fams = sorted(families.items(), key=lambda kv: _best_score(kv[1]), reverse=higher)
+        for fam, runs in sorted_fams:
+            best = (
+                max(runs, key=lambda r: r.score_mean if r.score_mean is not None else float("-inf"))
+                if higher
+                else min(runs, key=lambda r: r.score_mean if r.score_mean is not None else float("inf"))
+            )
+            score_str = f"{best.score_mean:.4f}" if best.score_mean is not None else "no score"
+            lines.append(
+                f"{fam}: best={score_str} ({best.experiment_id}, features v{best.feature_version}, runs={len(runs)})"
+            )
+
+        if self.plan.planned_model_families:
+            tried = set(families.keys())
+            untried = [f for f in self.plan.planned_model_families if f not in tried]
+            if untried:
+                lines.append(f"Untried planned families: {', '.join(untried)}")
+
+        return lines
+
     def dead_ends(self) -> list[str]:
         items: list[str] = []
         # 1. Crashed or rejected setups with first reason
@@ -350,10 +404,21 @@ class Ledger(BaseModel):
             if len(dropped) >= 2 and len(kept) == 0:
                 items.append(f"feature family '{fam}': all {len(dropped)} ideas dropped")
 
-        # 3. Lesson of rounds with no counted gain
+        # 3. Individual dropped features that actively hurt CV
+        for f in self.features:
+            if not f.kept and f.score_gain is not None and f.score_gain < 0:
+                items.append(f"dropped feature '{f.name}' ({f.family}): {f.score_gain:+.4f}")
+
+        # 4. Lesson of rounds with no counted gain
         for review in self.reviews:
             if not self.round_had_gain(review.iteration) and review.lesson.strip():
                 items.append(f"round {review.iteration} lesson: {review.lesson.strip()}")
+
+        # 5. Reviews with hypothesis_verdict == "refuted"
+        for review in self.reviews:
+            if getattr(review, "hypothesis_verdict", None) == "refuted":
+                desc = review.lesson.strip() or review.reason.strip() or "refuted"
+                items.append(f"round {review.iteration} refuted: {desc}")
 
         # Deduplicate preserving order, cap at 15
         deduped: list[str] = []
@@ -379,4 +444,6 @@ class Ledger(BaseModel):
             desc_lower = idea.description.strip().lower()
             if key not in existing_keys and desc_lower not in existing_reasons:
                 open_ideas.append(idea)
+        priority_order = {"high": 0, "medium": 1, "low": 2}
+        open_ideas.sort(key=lambda x: priority_order.get(x.priority, 1))
         return open_ideas

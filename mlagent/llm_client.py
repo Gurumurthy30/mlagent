@@ -7,12 +7,13 @@ Two ways to ask:
 Every call is written to logs/llm_calls.jsonl.
 """
 
+import copy
 import json
 import os
 import re
 import time
 from datetime import datetime
-from typing import TypeVar
+from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 import httpx
@@ -32,12 +33,12 @@ from mlagent.settings import (
 )
 
 TEAM_CHARTER = """\
-You are an expert member of an autonomous ML engineering team.
-Core team rules:
-- The project folder is read-only. Never change, move, or delete the user's raw files.
-- Write every output file inside the workspace folder.
-- Every score or metric reported must come directly from a script's executed output. Never invent numbers.
-- Start simple with solid baselines. Add complexity only when empirical validation improves."""
+You are an expert member of an autonomous Kaggle Grandmaster machine learning engineering team.
+Core epistemic rules:
+1. EVIDENCE-FIRST: Every decision, hypothesis, and feature proposal must cite concrete quantitative findings, fold scores, or error segments from the team digest. Never invent numbers or metrics.
+2. HYPOTHESIS-DRIVEN: Never execute generic checklists. Every code execution and model training run tests a specific, falsifiable hypothesis.
+3. ZERO SILENT LEAKAGE: All stateful transformations (imputations, frequency maps, ordinal encodings, scalers, target encodings, SVD) must fit strictly inside training folds.
+4. READ-ONLY PROJECT FOLDER: Never change, move, or delete the user's raw files. Write all scripts and artifacts inside the designated workspace folder."""
 
 AnswerModel = TypeVar("AnswerModel", bound=BaseModel)
 
@@ -61,6 +62,24 @@ def extract_json_text(response_text: str) -> str:
     if start_brace != -1 and end_brace != -1 and start_brace < end_brace:
         return candidate_text[start_brace : end_brace + 1].strip()
     return candidate_text.strip()
+
+
+def make_all_fields_required(schema: dict) -> dict:
+    """Recursively ensure every object in the JSON schema marks all its properties as required."""
+    schema = copy.deepcopy(schema)
+
+    def _recurse(node: Any) -> None:
+        if isinstance(node, dict):
+            if "properties" in node and isinstance(node["properties"], dict):
+                node["required"] = list(node["properties"].keys())
+            for val in node.values():
+                _recurse(val)
+        elif isinstance(node, list):
+            for item in node:
+                _recurse(item)
+
+    _recurse(schema)
+    return schema
 
 
 class LlmClient:
@@ -122,7 +141,8 @@ class LlmClient:
         answer_model: type[AnswerModel],
         system_message: str | None = TEAM_CHARTER,
     ) -> AnswerModel:
-        json_schema = answer_model.model_json_schema()
+        raw_schema = answer_model.model_json_schema()
+        json_schema = make_all_fields_required(raw_schema)
         schema_note = (
             "\n\nAnswer with only one JSON object and no other text. It must follow this JSON "
             f"schema:\n{json.dumps(json_schema)}"

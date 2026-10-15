@@ -35,7 +35,7 @@ IGNORED_FOLDER_NAMES = [
     "node_modules",
 ]
 
-MAX_CODE_ATTEMPTS = 4
+MAX_CODE_ATTEMPTS = 5
 MAX_ERROR_TEXT_CHARS = 1500
 MAX_COMMAND_OUTPUT_CHARS = 20000
 LOGGED_OUTPUT_CHARS = 2000
@@ -108,13 +108,13 @@ CANDIDATE_FILE_HEADER = "import numpy as np\nimport pandas as pd\n\n\n"
 
 DIGEST_CHAR_LIMITS = {
     "data_engineer": 8500,
-    "data_analyst": 5000,
-    "ml_lead": 4500,
-    "feature_engineer": 16000,
-    "modeler": 7000,
-    "evaluator": 5500,
-    "tuner": 5500,
-    "reviewer": 5500,
-    "submitter": 4000,
+    "data_analyst": 7000,
+    "ml_lead": 6000,
+    "feature_engineer": 14000,
+    "modeler": 8000,
+    "evaluator": 6000,
+    "tuner": 6000,
+    "reviewer": 8000,
+    "submitter": 5000,
     "coder": 8000,
 }

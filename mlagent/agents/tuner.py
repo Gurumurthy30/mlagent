@@ -81,13 +81,18 @@ def run_tuner(ledger: Ledger, agent_context: AgentContext) -> list[ExperimentRun
 
         instructions = ledger.reviews[-1].instructions if ledger.reviews else []
         instructions_text = "\n".join(f"- {i}" for i in instructions) or "none"
+        post_proc = source_run.post_processing or ledger.plan.metric_post_processing
 
         task_text = (
-            f"Tune model {source_run.model_family} using a bounded search in ONE script.\n"
+            f"Tune model {source_run.model_family} using a bounded hyperparameter search (Optuna or structured search) in ONE script.\n"
             f"Source script: {source_run.script_path}\n"
-            f"Initial parameters: {json.dumps(source_run.model_params)}\n"
+            f"Initial parameters (Trial 0 baseline): {json.dumps(source_run.model_params)}\n"
+            f"Parent CV score to beat: {source_run.score_mean}\n"
+            f"Post-processing to preserve: {post_proc or 'none'}\n"
             f"Search up to {TUNE_TRIAL_COUNT} trials or {search_minutes} minutes maximum.\n"
             f"Primary metric: {ledger.brief.primary_metric} ({direction} is better)\n"
+            f"Target column: {ledger.brief.target or 'none'}, ID column: {ledger.brief.id_column or 'none'}\n"
+            f"Deliverable format: {ledger.brief.deliverable_format}\n"
             f"Random seed: {RANDOM_SEED}\n"
             f"Use GPU: {'yes' if ledger.plan.use_gpu else 'no'}\n"
             f"Project folder (read-only): {workspace.project_folder}\n"
@@ -95,11 +100,30 @@ def run_tuner(ledger: Ledger, agent_context: AgentContext) -> list[ExperimentRun
             f"Splits file: {workspace.splits_path}\n"
             f"Features file: {features_path} (import {features_path.stem} after adding {workspace.features_folder} to sys.path)\n"
             f"Reviewer instructions:\n{instructions_text}\n\n"
-            "Requirements:\n"
-            "- Save test_predictions.csv and val_predictions.csv in the experiment folder.\n"
-            "- Output JSON RESULT with best trial validation_scores, test_predictions_path, model_params, and trials_run.\n\n"
+            "GRANDMASTER TUNING PROTOCOL (in priority order):\n"
+            "1. PRE-CACHE PREPARED FOLDS ONCE: Before starting the trial loop, run `fit_preparation(train_fold)` and `apply_preparation` "
+            "for each CV fold (`fold >= 0`) ONCE and store the prepared fold matrices in a list in memory so trials run 10x faster.\n"
+            "2. TRIAL 0 WARM-START GUARANTEE: Trial 0 MUST evaluate the exact `Initial parameters` without changes (e.g. `study.enqueue_trial(initial_params)`). "
+            "If no later trial beats Trial 0, keep Trial 0's parameters and predictions so tuning NEVER regresses below the parent run.\n"
+            "3. HIGH-LEVERAGE SEARCH SPACE:\n"
+            "   - For GBDTs (LightGBM / XGBoost / CatBoost): tune regularization and tree capacity (`colsample_bytree`/`feature_fraction` in [0.5, 1.0], "
+            "`subsample`/`bagging_fraction` in [0.5, 1.0], `min_child_samples`/`min_data_in_leaf` in [5, 100], `max_depth` in [3, 10] or `num_leaves` in [15, 127], "
+            "`reg_alpha` in [1e-3, 10.0] log-scale, `reg_lambda` in [1e-3, 10.0] log-scale, `learning_rate` in [0.015, 0.12]) with early stopping.\n"
+            "   - For Linear / Ridge / Logistic / MLP: tune regularization (`alpha` or `C` log-scale [1e-4, 1e3], `l1_ratio`, hidden dimensions, `dropout`, `weight_decay`).\n"
+            "4. STRICT HOLDOUT ISOLATION: Tune strictly on CV folds (`fold >= 0`). NEVER evaluate or select trials using `fold == -1` (holdout).\n"
+            "5. FINAL PREDICTIONS & POST-PROCESSING: Using the best trial parameters, compute out-of-fold validation predictions (`fold >= 0`), "
+            "score holdout (`fold == -1`) once if present, average test set predictions across all CV fold models, apply the `Post-processing to preserve` (e.g. OOF threshold tuning), "
+            "and write `val_predictions.csv` (including `proba_<class>` for classification) and `test_predictions.csv` (matching `Deliverable format`).\n"
+            "6. RESULT LINE: Output JSON RESULT with best trial `validation_scores`, `holdout_score`, `test_predictions_path`, `model_path`, `model_params`, and `trials_run`.\n\n"
             f"SCRIPT RULES:\n{MODEL_SCRIPT_RULES_TEXT}\n\n"
             f"{SPLITS_FORMAT_TEXT}"
+        )
+
+        event_bus.emit(
+            EventType.STATUS,
+            AGENT_NAME,
+            f"tuning {source_run.model_family} parameters",
+            {"reason": f"optimizing hyperparams of {source_run.experiment_id} across up to {TUNE_TRIAL_COUNT} trials"},
         )
 
         run = ExperimentRun(
@@ -108,6 +132,8 @@ def run_tuner(ledger: Ledger, agent_context: AgentContext) -> list[ExperimentRun
             model_family=source_run.model_family,
             model_params=source_run.model_params,
             summary=f"tuned {source_run.model_family} from {source_run.experiment_id}",
+            hypothesis=f"Tuning regularization and capacity hyperparameters of {source_run.model_family} ({source_run.experiment_id}) will improve CV score.",
+            post_processing=post_proc,
             feature_version=source_run.feature_version,
             iteration=ledger.iteration,
             artifact_dir=str(experiment_folder),
@@ -139,7 +165,13 @@ def run_tuner(ledger: Ledger, agent_context: AgentContext) -> list[ExperimentRun
         if run.crashed:
             event_bus.emit(EventType.WARNING, AGENT_NAME, f"{experiment_id} crashed: {run.error[:80]}")
         else:
-            event_bus.emit(EventType.INFO, AGENT_NAME, f"{experiment_id} score {run.score_mean:.4f}")
+            score_str = f"{run.score_mean:.4f}" if run.score_mean is not None else "n/a"
+            event_bus.emit(EventType.INFO, AGENT_NAME, f"{experiment_id} score {score_str}")
+            event_bus.emit(
+                EventType.RESULT,
+                AGENT_NAME,
+                f"{experiment_id} (tuned {source_run.model_family}): score {score_str}",
+            )
 
     event_bus.emit(EventType.AGENT_FINISHED, AGENT_NAME, f"{len(tuned_runs)} model(s) tuned")
     return tuned_runs

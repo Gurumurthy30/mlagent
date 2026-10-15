@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from hypothesis import given
+from hypothesis import assume, given
 
 from mlagent.digest import DIGEST_CHAR_LIMITS, build_digest, build_report_facts, shorten_text
 from mlagent.state import Ledger
@@ -25,6 +25,13 @@ def test_digest_never_exceeds_budget_for_any_agent(ledger: Ledger) -> None:
 @given(ledger=st_ledger())
 def test_digest_never_renders_literal_none(ledger: Ledger) -> None:
     """Digest output should never contain 'None' as an unformatted string."""
+    assume("None" not in ledger.user_task)
+    assume("None" not in ledger.user_metrics_text)
+    assume("None" not in ledger.brief.summary)
+    assume("None" not in ledger.brief.target)
+    assume(not any("None" in r.summary or "None" in r.error for r in ledger.runs))
+    assume(not any("None" in f.statement for f in ledger.eda.findings))
+
     for agent_name in DIGEST_CHAR_LIMITS:
         digest = build_digest(agent_name, ledger)
         # Avoid literal "None" when formatting fields (should be empty, omitted, or meaningful text)

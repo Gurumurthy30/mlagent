@@ -155,6 +155,12 @@ def make_node(
         saved_ledger = ledger.model_copy(update=updates)
         save_ledger(agent_context.workspace, saved_ledger)
         write_progress_file(agent_context.workspace, build_progress_text(saved_ledger))
+        agent_context.event_bus.emit(
+            EventType.STATUS,
+            node_name,
+            f"updated progress ({saved_ledger.phase})",
+            {"reason": "state saved", "ledger": saved_ledger},
+        )
         return updates
 
     return run_node
@@ -217,7 +223,28 @@ def build_nodes(agent_context: AgentContext) -> dict[str, NodeFunction]:
     limits = agent_context.config.limits
     event_bus = agent_context.event_bus
 
+    def run_de_node(ledger: Ledger) -> dict:
+        event_bus.emit(
+            EventType.INFO,
+            "Data Engineer",
+            "Stage Understand: inspecting data files, column types, and problem setup.",
+        )
+        return {"brief": run_data_engineer(ledger, agent_context), "phase": "data_analyst"}
+
+    def run_da_node(ledger: Ledger) -> dict:
+        event_bus.emit(
+            EventType.INFO,
+            "Data Analyst",
+            "Stage Understand: exploring distributions, correlations, and checking for data leakage.",
+        )
+        return {"eda": run_data_analyst(ledger, agent_context)}
+
     def run_ml_lead_node(ledger: Ledger) -> dict:
+        event_bus.emit(
+            EventType.INFO,
+            "ML Lead",
+            "Stage Plan: choosing the validation strategy, target metric, and baseline model.",
+        )
         plan = run_ml_lead(ledger, agent_context)
         baseline_short = (
             plan.baseline_description[:50] + "..."
@@ -237,6 +264,12 @@ def build_nodes(agent_context: AgentContext) -> dict[str, NodeFunction]:
         if stop_reason is not None:
             event_bus.emit(EventType.DECISION, "Controller", f"stopping the loop: {stop_reason}")
             return {"stop_reason": stop_reason, "phase": "submit"}
+        if not ledger.runs_this_round():
+            event_bus.emit(
+                EventType.INFO,
+                "Controller",
+                f"Stage Experiment (Round {ledger.iteration + 1}/{limits.max_experiment_loops}): testing features and models.",
+            )
         event_bus.emit(
             EventType.INFO,
             "Controller",
@@ -303,7 +336,20 @@ def build_nodes(agent_context: AgentContext) -> dict[str, NodeFunction]:
 
         return updates
 
+    def run_submit_node(ledger: Ledger) -> dict:
+        event_bus.emit(
+            EventType.INFO,
+            "Submitter",
+            "Stage Deliver: verifying test predictions and copying final submission files.",
+        )
+        return {"final": run_submitter(ledger, agent_context), "phase": "report"}
+
     def run_report_node(ledger: Ledger) -> dict:
+        event_bus.emit(
+            EventType.INFO,
+            "Reviewer",
+            "Stage Deliver: synthesizing trajectory facts and generating the final project report.",
+        )
         try:
             report_text, headline = run_report(ledger, agent_context)
         except Exception as err:
@@ -329,8 +375,8 @@ def build_nodes(agent_context: AgentContext) -> dict[str, NodeFunction]:
         return {"final": final, "status": "done", "phase": "done"}
 
     node_actions = {
-        "data_engineer": lambda ledger: {"brief": run_data_engineer(ledger, agent_context), "phase": "data_analyst"},
-        "data_analyst": lambda ledger: {"eda": run_data_analyst(ledger, agent_context)},
+        "data_engineer": run_de_node,
+        "data_analyst": run_da_node,
         "ml_lead": run_ml_lead_node,
         "stop_check": run_stop_check_node,
         "feature_engineer": lambda ledger: run_feature_engineer(ledger, agent_context),
@@ -338,7 +384,7 @@ def build_nodes(agent_context: AgentContext) -> dict[str, NodeFunction]:
         "tune": lambda ledger: {"runs": [*ledger.runs, *run_tuner(ledger, agent_context)], "last_tuned_iteration": ledger.iteration},
         "evaluate": run_evaluate_node,
         "review": run_review_node,
-        "submit": lambda ledger: {"final": run_submitter(ledger, agent_context), "phase": "report"},
+        "submit": run_submit_node,
         "report": run_report_node,
     }
     return {

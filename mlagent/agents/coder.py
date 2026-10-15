@@ -15,7 +15,6 @@ from mlagent.code_runner import extract_tagged_json, keep_end_of_text
 from mlagent.digest import build_digest
 from mlagent.events import EventType
 from mlagent.settings import (
-    MAX_CODE_ATTEMPTS,
     MAX_ERROR_TEXT_CHARS,
     MAX_LIBRARY_LOOKUPS,
     RANDOM_SEED,
@@ -35,28 +34,55 @@ LIBRARY_LOOKUP_MODULE = "mlagent.library_lookup"
 OUTPUT_END_CHARS_FOR_MODEL = 1500
 
 CODER_PROMPT = """\
-You are the Coder, an expert ML engineer implementing scripts for the team.
-You receive a task and write ONE complete Python script. You cannot see the screen or ask questions.
+You are the Coder, a principal competitive ML engineer implementing production-grade Python scripts \
+for the autonomous ML team. You receive a task and write ONE complete, self-contained Python script.
 
-HOW TO ANSWER:
-1. Exactly one ```python block with the complete script.
-   Starts with imports, runs under if __name__ == "__main__":, uses random seed {random_seed}.
-2. Optional ```{shell_name} block with shell commands (e.g. python -m pip install) if a library is missing.
-3. Optional ```lookup block with dotted names (e.g. lightgbm.LGBMClassifier) to inspect documentation ({lookups_left} left).
+RESPONSE FORMAT:
+1. Optional ```{shell_name} block: shell commands (e.g. `python -m pip install <pkg>`) ONLY if a library is missing.
+2. Optional ```lookup block: dotted names to inspect docstrings ({lookups_left} lookups left).
+3. Exactly ONE ```python block containing the complete runnable script:
+```python
+import os, sys, json, time, random, warnings
+warnings.filterwarnings("ignore")
+import numpy as np
+import pandas as pd
+# from mlagent_tools import load_splits, load_val_preds_with_labels
 
-SCRIPT RULES:
-- Clean, readable code. Output predictions must be written inside working folder: val_predictions.csv and test_predictions.csv.
-- Model files must be saved inside working folder as model.<ext>.
-- Helpers: `from mlagent_tools import load_splits, load_val_preds_with_labels` is available.
-- Bound work: print short progress lines after steps with seconds elapsed.
-- Final output: print exactly one line at the end:
-  <{result_tag}>JSON</{result_tag}>
-  containing:
+def main():
+    start_time = time.time()
+    np.random.seed({random_seed})
+    random.seed({random_seed})
+
+    # Execute task with fold-isolation and pre-flight assertions...
+
+    result = {{"key": "value"}}  # convert all numpy scalars to native float/int!
+    print(f"<{result_tag}>{{json.dumps(result)}}</{result_tag}>")
+
+if __name__ == "__main__":
+    main()
+```
+
+CRASH-FREE COMPETITIVE ML CODING IDIOMS (follow strictly):
+1. VERSION-SAFE GBDT APIS (do not pass deprecated `verbose` or `early_stopping_rounds` kwargs to `.fit()` in LightGBM):
+   - LightGBM: `model = lgb.LGBMClassifier(**params, random_state={random_seed}, verbosity=-1, n_jobs=-1)` and `model.fit(X_tr, y_tr, eval_set=[(X_va, y_va)], callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)])`.
+   - CatBoost: `model = cb.CatBoostClassifier(**params, random_seed={random_seed}, verbose=0, allow_writing_files=False)` and `model.fit(X_tr, y_tr, eval_set=(X_va, y_va), early_stopping_rounds=50, verbose=False)`.
+   - XGBoost: `model = xgb.XGBClassifier(**params, random_state={random_seed}, early_stopping_rounds=50, n_jobs=-1, verbosity=0)` and `model.fit(X_tr, y_tr, eval_set=[(X_va, y_va)], verbose=False)`.
+2. SAFE MATH, DATAFRAME INDEXING & FOLD ISOLATION:
+   - Always call `.reset_index(drop=True)` when slicing fold DataFrames (`train_fold`, `val_fold`) before assigning derived columns or concatenating arrays, while keeping `example_id` aligned with `splits.json`.
+   - Guard all divisions with `np.where(np.abs(denom) > 1e-9, num / denom, 0.0)` and sanitize matrices with `df.replace([np.inf, -np.inf], np.nan).fillna(0.0)`.
+   - Never fit encoders, imputers, target encodings, or `fit_preparation` on full data before splitting; always fit on `train_fold` and apply to `val_fold` and `test`.
+3. PRE-FLIGHT SELF-VERIFICATION ASSERTIONS (run before printing `<{result_tag}>`):
+   - Cast all numbers in `result` dict to native Python `float(x)` / `int(x)` (never `np.float32`, `np.int64`, `NaN`, or `Inf`).
+   - When writing `val_predictions.csv` and `test_predictions.csv` in `{working_folder}`, assert both files exist on disk, contain zero `NaN`s, and match the required column names and row counts.
+4. DEBUGGING ON ATTEMPT > 1:
+   - If `ATTEMPT > 1`, inspect the exact traceback in `history_text`, fix the root cause (e.g., column name, shape, dtype, API call) without stripping away the intended ML logic, and output the complete repaired script.
+   - Read-only project folder: never write inside the project folder; save all files inside `{working_folder}`.
+   - The very last stdout line MUST be `<{result_tag}>JSON</{result_tag}>` with keys:
 {result_keys_text}
 
 WHERE THINGS ARE:
-- Working folder (save outputs here): {working_folder}
-- Script will be saved as: {script_path}
+- Working folder: {working_folder}
+- Script path: {script_path}
 
 SITUATION & BUDGET:
 {digest}
@@ -220,6 +246,7 @@ def run_coder(
     max_code_attempts = agent_context.config.limits.max_code_attempts
 
     while attempts_used < max_code_attempts:
+        recent_history = "\n\n".join(history_entries[-2:]) if history_entries else "First attempt."
         prompt = CODER_PROMPT.format(
             random_seed=RANDOM_SEED,
             shell_name=agent_context.environment.shell_name,
@@ -233,7 +260,7 @@ def run_coder(
             task_text=task_text,
             attempt_number=attempts_used + 1,
             max_code_attempts=max_code_attempts,
-            history_text="\n\n".join(history_entries) or "First attempt.",
+            history_text=recent_history,
         )
 
         answer_text = agent_context.llm_client.ask_text(AGENT_NAME, prompt)
@@ -259,7 +286,7 @@ def run_coder(
         agent_context.event_bus.emit(
             EventType.WARNING,
             AGENT_NAME,
-            f"attempt {attempts_used} of {MAX_CODE_ATTEMPTS} failed: {error_line[:120]}",
+            f"attempt {attempts_used} of {max_code_attempts} failed: {error_line[:120]}",
         )
         history_entries.append(f"Attempt {attempts_used} failed:\n{outcome.message_for_model}")
         if error_line == previous_error_line:

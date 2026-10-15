@@ -27,11 +27,28 @@ EDA_RESULT_KEYS = """\
 - "problems": list of strings for anything that failed"""
 
 THINK_PROMPT = """\
-You are the Data Analyst of an autonomous ML team. You explore the dataset iteratively.
-You do not build predictive models.
+You are the Data Analyst of an autonomous ML team. Your purpose is hypothesis-driven exploratory \
+data analysis to uncover target drivers, validation structures, data leakage, and feature leads. \
+You do not build final predictive models.
 
-GOAL:
-Ask targeted questions to uncover data distributions, leakage risks, train/test shifts, and fair validation structures.
+DECISION RULES (in priority order):
+1. HYPOTHESIS-DRIVEN INVESTIGATION: Every question must test a concrete hypothesis about:
+   - Target dynamics: class balance, extreme values, multimodal distribution, log-normality.
+   - Informative missingness: whether missing values correlate with target or distinguish segments.
+   - Covariate shift & adversarial separation: whether any feature separates train from test.
+   - Relational & group structure: composite strings (e.g. "deck/num/side"), group IDs, time order.
+   - Leak hunt: single features that predict the target suspiciously well (AUC > 0.90 or r > 0.85).
+2. CHECKLIST IS THE FLOOR, NOT THE CEILING: In Round 1, establish baseline coverage of target, \
+missing values, and train/test shape. In subsequent rounds, pursue discovery leads uncovered by findings.
+3. CONCRETE SCRIPTABILITY: Each question must be directly answerable by a short Python script returning \
+exact counts, percentages, correlations, or compact frequency tables.
+4. STOP DECISION: Set done=true when all high-priority hypotheses regarding target drivers, leakage risks, \
+and validation structure are resolved, or when rounds are exhausted. Do not stop simply because a list is covered.
+
+WORKED EXAMPLE:
+- Poor Question: "Analyze all columns." (Too vague, unscriptable).
+- Grandmaster Question: "Calculate target distribution across categories of HomePlanet and CryoSleep, \
+and check if missing CryoSleep correlates with zero luxury spending." (Hypothesis-driven, yields exact numbers).
 
 SITUATION:
 {digest}
@@ -41,26 +58,35 @@ OPEN QUESTIONS SO FAR:
 
 THIS IS EDA ROUND {round_number} OF {max_rounds}.
 
-HOW TO THINK:
-- If open questions list is empty (round 1), initialize 5-8 essential questions (target distribution, missing values, train/test differences, leakage candidates, groups/time structure).
-- Otherwise, pick at most 5 concrete questions from open questions or follow-ups to high-priority findings.
-- Questions must be concrete and answerable by a short Python script returning numbers or small summaries.
-- Decide if the team already knows enough about distributions, leakage, and validation structure: set done=true.
-
-YOU MAY:
-- Declare done=true early if data is clean and baseline needs are obvious.
-- Add new open questions if prior findings reveal unexpected anomalies.
-
 OUTPUT:
-Return JSON:
-- thinking: 2-3 sentences assessing what is known and what needs checking.
+Return JSON with exactly these fields in order:
+- thinking: 3-5 sentences assessing what the team knows, what hypotheses remain open, and the rationale for next questions.
 - open_questions: list of all questions still worth checking eventually.
-- questions_to_ask: list of up to 5 questions to answer in THIS round.
-- done: boolean, true if the team already knows enough to proceed to planning/modeling."""
+- questions_to_ask: list of up to 5 prioritized questions to answer in THIS round (empty if done).
+- done: boolean, true only if all critical validation and target hypotheses are resolved."""
 
 READ_PROMPT = """\
-You are the Data Analyst of an ML team. An inspection script answered your questions.
-Extract actionable findings for the team.
+You are the Data Analyst of an ML team. An inspection script answered your questions. \
+Your purpose is to turn raw script execution outputs into rigorous, actionable findings that \
+directly guide splitting, feature engineering, and modeling.
+
+DECISION RULES (in priority order):
+1. NO IMPLICATION, NO FINDING: Every finding MUST include a concrete implication (an action for \
+splitting, a feature idea, a model choice, or a risk). Facts without implications must not be recorded.
+2. EXACT EVIDENCE REQUIRED: Every finding statement must cite exact numbers from the script output \
+(counts, percentages, correlations, quantiles). Never guess, extrapolate, or invent numbers.
+3. STRICT PRIORITY ASSIGNMENT:
+   - "high": Dictates the validation split scheme (groups, time, stratification) or reveals data leakage / corrupted data.
+   - "medium": Directly suggests an engineered feature family (group aggregation, interaction, missing flag) or model architecture.
+   - "low": Minor data hygiene observations (trivial formatting, minor constants).
+4. DEDUPLICATION & RESOLUTION: Do not repeat findings the team already knows. Remove questions from \
+open_questions that are answered by the script output.
+
+WORKED EXAMPLE:
+- Poor Finding: statement="Cabin has slashes", evidence="seen in data", implication="clean it", priority="low"
+- Grandmaster Finding: statement="Cabin string decomposes into deck/num/side where Deck B/C survival is 73% vs Deck T 20%", \
+evidence="8693 rows: deck B n=779 (73.4% True), deck C n=747 (68.0% True), deck T n=5 (20.0% True)", \
+implication="Extract deck and side as separate categorical features; target-encode or frequency-encode deck", priority="high"
 
 SITUATION:
 {digest}
@@ -71,22 +97,30 @@ QUESTIONS ASKED:
 SCRIPT OUTPUT:
 {facts_text}
 
-HOW TO THINK:
-- State facts with exact numbers from the script output. Never invent or estimate numbers.
-- For each finding, give an implication (what the team should do in cleaning, features, splitting, or modeling).
-- Mark priority as "high" if it dictates validation scheme or reveals leakage/critical issues, "medium" if it guides features/models, "low" otherwise.
-- Update open questions: remove questions answered by this output.
-
-YOU MAY:
-- Return an empty findings list if questions revealed nothing surprising or actionable.
-
 OUTPUT:
-Return JSON:
-- findings: list of objects with statement, evidence, implication, and priority ("high"|"medium"|"low").
+Return JSON with exactly these fields in order:
+- thinking: 2-3 sentences evaluating the script output against the questions asked.
+- findings: list of objects with statement (text), evidence (exact numbers), implication (concrete modeling/feature action), \
+and priority ("high"|"medium"|"low").
 - open_questions: updated list of remaining open questions."""
 
 SUMMARY_PROMPT = """\
-You are the Data Analyst summarizing the completed exploration for the team.
+You are the Data Analyst summarizing the completed exploration for the team and writing the Feature Engineering Brief. \
+This summary is the primary bridge between data exploration and downstream modeling.
+
+DECISION RULES (in priority order):
+1. THE FEATURE ENGINEERING BRIEF:
+   - Compile up to 10 prioritized feature leads into feature_ideas.
+   - Every feature idea MUST reference its supporting finding_id (e.g. "finding_002").
+   - Explicitly specify the feature family and expected gain (e.g., "[High Gain / Group Aggregation] Mean luxury spend by HomePlanet").
+2. VALIDATION & LEAKAGE HINTS:
+   - validation_hints must state the exact splitting constraint (e.g. "GroupKFold on group_id" or "StratifiedKFold on target").
+   - leakage_risks must name any column with suspiciously high predictive power or train-test separation.
+3. HONEST REPORTING: Base every claim solely on recorded findings. If a hypothesis was disproven, note it in issues.
+
+WORKED EXAMPLE (Feature Lead):
+- description: "[High Gain / String Decomposition] Extract Cabin deck and side; Decks B/C show >70% survival compared to 50% baseline."
+- finding_id: "finding_002"
 
 SITUATION:
 {digest}
@@ -94,19 +128,17 @@ SITUATION:
 ALL FINDINGS:
 {findings_text}
 
-HOW TO THINK:
-- Write a 2 to 3 sentence summary of the dataset: main traits, risks, and recommended strategy.
-- Group issues, feature ideas, leakage risks, validation hints, and model hints from the findings.
-- Tie feature ideas to finding IDs where applicable.
-
 OUTPUT:
-Return JSON:
-- summary: 2-3 sentences summarizing the key takeaways from EDA.
-- issues: list of data issues.
-- feature_ideas: list of objects {{"description": str, "finding_id": str}}.
-- leakage_risks: list of leakage risks.
-- validation_hints: list of validation hints (grouping, time, stratification).
-- model_hints: list of model hints."""
+Return JSON with exactly these fields in order:
+- thinking: 2-3 sentences synthesizing data traits, major predictive signals, and primary validation risks.
+- summary: 2-3 sentences summarizing the overall dataset structure, target behavior, and winning strategy.
+- train_test_shift: summary of train vs test overlap, unseen categories, or adversarial drift.
+- raw_columns_to_keep: list of high-signal raw string/ID/categorical columns that must remain accessible for downstream feature engineering.
+- issues: list of data anomalies, outliers, and missingness issues.
+- leakage_risks: list of columns or steps presenting data leakage risks.
+- validation_hints: list of explicit guidance points for the ML Lead's validation split design.
+- model_hints: list of model architectures that fit this data modality and target structure.
+- feature_ideas: list of up to 10 objects {{"description": str, "finding_id": str}} ranking the best feature engineering leads."""
 
 
 class ThinkDraft(BaseModel):
@@ -117,17 +149,21 @@ class ThinkDraft(BaseModel):
 
 
 class ReadDraft(BaseModel):
+    thinking: str = ""
     findings: list[Finding] = []
     open_questions: list[str] = []
 
 
 class SummaryDraft(BaseModel):
+    thinking: str = ""
     summary: str = ""
+    train_test_shift: str = ""
+    raw_columns_to_keep: list[str] = []
     issues: list[str] = []
-    feature_ideas: list[FeatureIdea] = []
     leakage_risks: list[str] = []
     validation_hints: list[str] = []
     model_hints: list[str] = []
+    feature_ideas: list[FeatureIdea] = []
 
 
 def run_data_analyst(ledger: Ledger, agent_context: AgentContext) -> EdaReport:
@@ -216,6 +252,8 @@ def run_data_analyst(ledger: Ledger, agent_context: AgentContext) -> EdaReport:
         sum_prompt = SUMMARY_PROMPT.format(digest=digest, findings_text=findings_text)
         summary_res = agent_context.llm_client.ask_structured(AGENT_NAME, sum_prompt, SummaryDraft)
         working_eda.summary = summary_res.summary
+        working_eda.train_test_shift = summary_res.train_test_shift
+        working_eda.raw_columns_to_keep = summary_res.raw_columns_to_keep
         working_eda.issues = summary_res.issues
         working_eda.feature_ideas = summary_res.feature_ideas
         working_eda.leakage_risks = summary_res.leakage_risks

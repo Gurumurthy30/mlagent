@@ -116,7 +116,59 @@ After that it runs autonomously. It prints one line per step. When it finishes i
 - `mlagent --version` displays version information.
 - `mlagent init-config` generates a starter `config.yaml` with basic keys uncommented and advanced keys documented.
 - `mlagent config` prints the effective configuration and source for every key.
+- `mlagent status [folder]` inspects current progress and renders the summary panel from the saved ledger without disrupting a running process.
+- `mlagent resume [folder]` resumes an interrupted run directly without prompting.
 - Override settings from the CLI with `--config <path>` or repeatable `--set section.key=value`.
+
+## Reading the CLI
+
+The terminal UI gives you full visibility into what the agents will do, what they are doing right now, why decisions were made, and the final results.
+
+### Log Labels and Fixed Columns
+
+Event log lines appear in fixed-width columns with hanging indents for wrapped text:
+
+`HH:MM:SS  LABEL   Agent              Message`
+
+Every label is an uppercase code and a descriptive word, so meaning is never communicated by color alone:
+
+| Label | Descriptive Word | Meaning |
+|---|---|---|
+| `START` | `start` | An agent has started working on a phase or experiment |
+| `DONE` | `done` | An agent finished its phase or task |
+| `INFO` | `info` | Stage explanations and high-level milestones |
+| `DECIDE` | `decision` | Reviewer or router choices, formatted as `next = <focus>. Why: <reason>` |
+| `CODE` | `code` | Script execution details (displayed in `detailed` verbosity) |
+| `WARN` | `warn` | Non-fatal warnings or script crash notifications |
+| `ERROR` | `error` | Unrecoverable error causing failure or early diversion |
+| `RESULT` | `result` | Trained model scores, evaluation verdicts, or feature round summaries |
+| `STATUS` | `status` | Updates the live "Now" line only (never written to `run.log`) |
+
+### Live Status Area (3 lines)
+
+Underneath the scrolling event log, a small 3-line live display updates in place:
+1. **Stage Tracker**: `● Understand  →  ● Plan  →  ◉ Experiment (round 2/15)  →  ○ Deliver` showing completed (`●`), active (`◉`), and pending (`○`) stages.
+2. **Now**: The active agent, what action it is performing, why, and elapsed time (e.g. `Now: Modeler: training lightgbm on features v2, because last round showed gains from tree depth (1m 12s)`).
+3. **Scoreboard**: Current best validation score, metric name and direction, approved runs count, and total elapsed runtime.
+
+### End-of-Run Summary Panel
+
+When the pipeline finishes, a summary panel is rendered directly from the ledger without calling the LLM:
+- **Green border**: Completed successfully (`done`).
+- **Amber border**: Stopped early with an approved baseline model (`plateau`, `budget`, or user stopped).
+- **Red border**: Failed without any approved model.
+- Displays best model family, validation and holdout scores, key EDA findings, kept features, dead ends, trust metrics, deliverable paths, and next step copy-paste commands.
+
+### Verbosity and Customization Flags
+
+Configure output through `config.yaml` under `ui:` or via CLI flags:
+- `-v, --verbose`: Detailed verbosity (includes script executions and per-step details).
+- `-q, --quiet`: Quiet verbosity (shows only stage changes, results, warnings, and errors).
+- `--plain`: Clean plain-text mode with no ANSI escape sequences and no Live area (ideal for piped output or dumb terminals).
+- `--no-color`: Monochrome theme without colored escape codes.
+- `--theme <dark|light|mono>`: Select custom color palette.
+- `-y, --yes`: Skip the "What I will do" confirmation prompt.
+- `--debug`: Display full exception tracebacks on unhandled errors.
 
 ## What it creates
 

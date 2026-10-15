@@ -19,6 +19,8 @@ class EventType(StrEnum):
     CODE_RUN = "code_run"
     WARNING = "warning"
     ERROR = "error"
+    RESULT = "result"
+    STATUS = "status"
 
 
 @dataclass
@@ -40,8 +42,18 @@ class EventBus:
     def subscribe(self, listener: EventListener) -> None:
         self._listeners.append(listener)
 
-    def emit(self, event_type: EventType, agent_name: str, message: str, **data) -> None:
-        event = AgentEvent(event_type, agent_name, message, data)
+    def emit(
+        self,
+        event_type: EventType,
+        agent_name: str,
+        message: str,
+        data: dict | None = None,
+        **kwargs,
+    ) -> None:
+        payload = dict(data) if data is not None else {}
+        if kwargs:
+            payload.update(kwargs)
+        event = AgentEvent(event_type, agent_name, message, payload)
         for listener in self._listeners:
             try:
                 listener(event)
