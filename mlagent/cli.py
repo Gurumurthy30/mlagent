@@ -61,11 +61,13 @@ def show_final_summary(ui: ConsoleUI, ledger: Ledger, workspace: Workspace) -> N
         if ledger.error_message:
             ui.show_message(f"The run ended early: {ledger.error_message}", style="yellow")
 
+    if ledger.final.headline:
+        ui.show_message(ledger.final.headline, style="bold cyan")
     best_run = ledger.best_approved_run()
     if best_run is not None:
         ui.show_message(
             f"Best result: {best_run.experiment_id} ({best_run.model_family}), "
-            f"{ledger.plan.primary_metric} {best_run.score_mean:.4f}"
+            f"{ledger.brief.primary_metric or 'score'} {best_run.score_mean:.4f}"
         )
     if ledger.final.predictions_path:
         ui.show_message(f"Predictions: {ledger.final.predictions_path}")

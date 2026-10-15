@@ -159,30 +159,31 @@ runs it, reads the error and fixes it.
 | Agent | Job |
 |---|---|
 | Data Engineer | Opens the folder, reads your words, writes the project brief |
-| Data Analyst | Exploratory data analysis, with a checklist the code tracks |
+| Data Analyst | Exploratory data analysis with open questions and findings (self-loop) |
 | ML Lead | Validation plan, metric, baseline, `splits.json` |
-| Feature Engineer | Input preparation, screens new steps on the fixed splits |
+| Feature Engineer | Input preparation, screens candidate ideas on fixed splits |
 | Modeler | Trains models, rejects repeated setups |
-| Evaluator | Independent check of every result, hard rules first |
-| Tuner | Bounded hyper-parameter search of the best models |
-| Reviewer | Reads the results and picks the next focus |
-| Submitter | Optional ensemble, delivery checks, `report.md` |
+| Evaluator | Independent check of every result, hard rules and gain checks |
+| Tuner | Bounded parameter search of best models (no LLM) |
+| Reviewer | Evaluates rounds, tracks lessons, guides focus, and writes final report |
+| Submitter | Mechanical delivery checks and optional ensemble |
 | Coder | The sub-agent that writes and runs code for the others |
 
 ```mermaid
 flowchart TD
-  A([mlagent start]) --> DE[Data Engineer] --> DA[Data Analyst] --> ML[ML Lead] --> SC{stop check}
+  A([mlagent start]) --> DE[Data Engineer] --> DA[Data Analyst]
+  DA -->|loop until eda.done| DA
+  DA -->|done| ML[ML Lead] --> SC{stop check}
   SC -->|start or features| FE[Feature Engineer]
   SC -->|model| M[Modeler]
   SC -->|tune| T[Tuner]
-  SC -->|data| DR[Data Analyst again]
+  SC -->|data| DR[Data Analyst revisit]
   FE --> M
-  FE -->|nothing kept| R
   DR --> FE
   M --> E[Evaluator]
   T --> E
   E --> R[Reviewer] --> SC
-  SC -->|stop| S[Submitter] --> Z([report and predictions])
+  SC -->|stop| S[Submitter] --> RP[Report] --> Z([report and predictions])
 ```
 
 The loop stops for one of these reasons, decided by code and not by the language model: the

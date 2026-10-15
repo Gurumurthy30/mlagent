@@ -87,16 +87,16 @@ def route_after_stop_check(ledger: Ledger) -> str:
         return "review"
 
     if ledger.focus == "start":
-        return "model" if ledger.current_feature_version >= 1 else "features"
+        return "model" if ledger.current_feature_version >= 1 else "feature_engineer"
     if ledger.focus == "data":
         return "data_analyst"
     if ledger.focus == "features":
-        return "features"
+        return "feature_engineer"
     if ledger.focus == "model":
         return "model"
     if ledger.focus == "tune":
         return "tune"
-    return "features"
+    return "feature_engineer"
 
 
 def route_after_features(ledger: Ledger) -> str:
@@ -193,7 +193,7 @@ def build_fallback_report(ledger: Ledger, agent_context: AgentContext) -> tuple[
         f"Predictions file: {ledger.final.predictions_path or 'not generated'}",
         "",
         "## How far to trust it",
-        f"Evaluation checks: {len(ledger.approved_runs())} runs verified on cross-validation splits.",
+        f"Validation checks: {len(ledger.approved_runs())} runs verified on cross-validation splits.",
         "",
         "## Caveats and next steps",
         "1. Verify performance on real test data distributions.",
@@ -348,7 +348,7 @@ def build_nodes(agent_context: AgentContext) -> dict[str, NodeFunction]:
         "data_analyst": data_analyst_node,
         "ml_lead": ml_lead_node,
         "stop_check": stop_check_node,
-        "features": features_node,
+        "feature_engineer": features_node,
         "model": model_node,
         "tune": tune_node,
         "evaluate": evaluate_node,
@@ -374,7 +374,7 @@ def build_pipeline(agent_context: AgentContext):
             return "data_analyst"
         if ledger.phase == "data_analyst":
             return "ml_lead"
-        return "features"
+        return "feature_engineer"
 
     graph = StateGraph(Ledger)
     for node_name, node_function in build_nodes(agent_context).items():
@@ -410,15 +410,15 @@ def build_pipeline(agent_context: AgentContext):
     graph.add_conditional_edges(
         "data_analyst",
         stop_when_over(route_after_data_analyst),
-        targets_with_exits("data_analyst", "ml_lead", "features"),
+        targets_with_exits("data_analyst", "ml_lead", "feature_engineer"),
     )
 
     chosen_next_node = {
         "stop_check": (
             route_after_stop_check,
-            ["features", "model", "tune", "data_analyst", "evaluate", "review"],
+            ["feature_engineer", "model", "tune", "data_analyst", "evaluate", "review"],
         ),
-        "features": (route_after_features, ["model", "review"]),
+        "feature_engineer": (route_after_features, ["model", "review"]),
         "model": (route_after_model, ["evaluate", "review"]),
         "tune": (route_after_tune, ["evaluate", "review"]),
     }
