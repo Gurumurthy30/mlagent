@@ -1,119 +1,74 @@
-"""The Evaluator: an independent reviewer who does not trust the Modeler's numbers.
+"""The Evaluator: an independent reviewer who verifies run honesty and checks for leakage.
 
-The Coder writes its own checking script: recompute the score from the saved validation
-predictions, score the holdout again, look for leakage. Hard rules in code come first and can
-reject a run without any LLM call. Otherwise the LLM reads the checks and gives the verdict.
+The Coder writes an independent verification script to recompute the score and check leakage.
+Code rules catch hard failures immediately. Otherwise the LLM assesses findings.
 """
+
+from __future__ import annotations
 
 import json
 from typing import Literal
 
 from pydantic import BaseModel, ValidationError
 
-from mlagent.agents.base import (
-    AgentContext,
-    AgentFailedError,
-    build_common_prompt_values,
-    display_name,
-    render_prompt,
-)
+from mlagent.agents.base import AgentContext
 from mlagent.agents.coder import run_coder
-from mlagent.digest import describe_brief, describe_dataset_columns, describe_run
+from mlagent.digest import build_digest
 from mlagent.events import EventType
+from mlagent.scoring import is_counted_gain
 from mlagent.script_contract import SPLITS_FORMAT_TEXT, VALIDATION_PREDICTIONS_FORMAT_TEXT
-from mlagent.settings import HOLDOUT_GAP_RELATIVE, SCORE_MISMATCH_RELATIVE_TOLERANCE
-from mlagent.state import Evaluation, ExperimentRun, Ledger, Verdict
+from mlagent.state import ExperimentRun, Ledger, Verdict
 
 AGENT_KEY = "evaluator"
-AGENT_NAME = display_name(AGENT_KEY)
+AGENT_NAME = "Evaluator"
 RESULT_TAG = "CHECKS"
-HOLDOUT_GAP_STD_COUNT = 3
 
-CHECKS_RESULT_KEYS_TEXT = """\
-- "recomputed_score": number or null, the mean over the validation splits of the primary \
-metric, recomputed by your own code from the saved validation predictions and the true labels. \
-Use null only when it truly cannot be computed
-- "recomputed_holdout_score": number or null, the same for the holdout examples. Null when \
-there is no holdout
-- "leakage_flags": list of objects {"description": text that names the column, file or step \
-and gives the numbers, "severity": "high", "medium" or "low"}. Use high for a single input that \
-predicts the target almost perfectly, for the target or an id that encodes it, for an input that \
-only exists after the outcome, and for validation examples that also sit in the training part. \
-Use medium for suspicious but explainable signals, and low for minor ones. An empty list means \
-you checked and found nothing
-- "train_validation_overlap": integer, how many validation examples also appear in the \
-training part of the same split (same row, file, text, speaker, group or near-duplicate). \
-Compare content, not only ids
-- "notes": list of short texts about anything else you noticed: the score of each split, the \
-score of a trivial baseline (most common class, the mean, or the last value) when it is quick \
-to compute, predictions that are constant, outside the valid range, the wrong number of rows or \
-contain missing values, a very uneven spread between splits, and any check that could not run \
-and why"""
+# Tunable evaluator thresholds
+SCORE_TOLERANCE_RELATIVE = 0.02
+HOLDOUT_GAP_STD_MULTIPLIER = 3.0
+HOLDOUT_GAP_RELATIVE_LIMIT = 0.05
+LARGE_SCORE_JUMP_STD_MULTIPLIER = 3.0
+TRAIN_VAL_OVERLAP_TOLERANCE = 0
+
+CHECKS_RESULT_KEYS = """\
+- "recomputed_score": number or null, mean across validation splits recomputed from predictions and true labels
+- "recomputed_holdout_score": number or null, score on holdout examples (null if no holdout)
+- "leakage_flags": list of {"description": text, "severity": "high"|"medium"|"low"}
+- "train_validation_overlap": integer, number of validation examples in train split
+- "notes": list of short observations"""
 
 VERDICT_PROMPT = """\
-You are the Evaluator of an ML team. You are the independent check between a run and the \
-team's memory. You do not trust the Modeler's numbers, and you never see the Modeler's \
-reasoning. You only see what the checks found. Your job is to say whether the score is honest \
-and usable, not whether it is high. A modest score that is honest is approved. A great score \
-that is leaked is rejected. You do not judge the choice of model: a weak but honest result is \
-for the Reviewer.
+You are the Evaluator of an ML team. You independently verify model runs.
+You never see the Modeler's reasoning, only the verification checks.
+You do not judge model architecture choice—only whether the score is honest, reproducible, and leak-free.
 
-{run_rules}
+GOAL:
+Determine if the model's performance is honest and usable, or flawed by data leakage or evaluation errors.
 
-WHAT THE TEAM KNOWS (plan, leakage risks from the EDA, runs so far, earlier rejections):
+SITUATION:
 {digest}
 
 THE RUN:
 {run_line}
 
-THE INDEPENDENT CHECKS (they already passed the automatic rules for score mismatch, holdout \
-gap, finite numbers and missing files, so small gaps are not your concern):
+INDEPENDENT CHECKS:
 {checks_text}
 
-Write the reasons first. They are your thinking, and the verdict must follow from them. Give \
-1 to 4 short reasons. Each one names the check and the number it relies on. Go through these \
-in order and skip a check that shows nothing:
-1. Leakage. Reject for a high flag, for an overlap above 1 percent of the validation \
-examples, and for a run that uses an input or step named in the known leakage risks. Name the \
-column or file and the number.
-2. Medium and low flags. A flag has an innocent explanation only when the task, the plan or \
-the EDA above gives it, for example a column that really is available at prediction time. If \
-no explanation is above, the flag is real. Reject for one medium flag that points at the \
-target or an id, and for two or more medium flags without explanation. Low flags alone never \
-reject: mention them.
-3. Plausibility. Compare with the earlier runs and with the trivial baseline in the notes, if \
-given. A large jump after a small change is a reason to look harder at the flags, but it does \
-not reject by itself. The same score on every split, or a score at the perfect value, is a \
-reason to reject unless the task explains it.
-4. Usable predictions. Right form for the metric (probabilities, labels or numbers), the \
-right number of rows, no missing values, not constant. Broken predictions are a reject.
-5. Checks that did not run. Say which and why. Do not reject for that alone, and never invent \
-a result for it.
+HOW TO THINK:
+- An honest modest score is approved; an amazing score achieved via leakage or target encoding in features must be rejected.
+- High severity leakage or train-val overlap is a strict rejection.
+- Medium flags require plausible domain explanations (e.g., legitimate pre-outcome features). Two unexplained medium flags warrant rejection.
+- A score that is completely constant across splits or identical to a trivial baseline should be examined with scrutiny.
 
-Then the verdict. Approve when the result looks honest and usable. Reject when it looks \
-leaked, overfitted or broken. A reject needs a finding you can name from the checks. A \
-suspicion without a finding is not enough. A real, unexplained leakage flag is enough, because \
-one approved leak misleads every later round. When you reject, make the last reason say what \
-the Modeler must fix, because the next round reads it. Write each reason so it makes sense on \
-its own, without the others.
+YOU MAY:
+- Approve a run whose score is lower than previous runs, provided it is methodologically sound.
+- Reject a run whose predictions are corrupted, constant, or misaligned with true labels.
 
-Example of the style only, a reject (do not copy its content):
-reasons:
-- The column cancel_date alone scores AUC 0.99 (high flag), and finding_005 says it is filled \
-in after the customer cancels, so it gives the answer away.
-- The recomputed score 0.981 equals the logged 0.981, so the number is right but the setup \
-is not.
-- Fix: remove cancel_date from the inputs and run again.
-verdict: reject
-
-Example of the style only, an approve:
-reasons:
-- The recomputed score 0.742 equals the logged 0.742, and the holdout score 0.738 agrees.
-- No leakage flags and an overlap of 0 of 1,240 validation examples.
-- Predictions are probabilities in range, with 3,100 rows, as the metric needs. The score is \
-modest, which is not a reason to reject.
-verdict: approve
-Return JSON: reasons (list of texts, written first), verdict (approve or reject)."""
+OUTPUT:
+Return JSON:
+- thinking: 2-4 sentences reviewing the checks.
+- reasons: list of short factual reasons citing numbers from the checks.
+- verdict: "approve" or "reject"."""
 
 
 class LeakageFlag(BaseModel):
@@ -130,151 +85,157 @@ class EvaluationChecks(BaseModel):
 
 
 class VerdictAnswer(BaseModel):
-    verdict: Verdict
-    reasons: list[str]
+    thinking: str = ""
+    reasons: list[str] = []
+    verdict: Verdict = "approve"
 
 
 def hard_check_reasons(
-    run: ExperimentRun, checks: EvaluationChecks, higher_is_better: bool
+    run: ExperimentRun,
+    checks: EvaluationChecks,
+    higher_is_better: bool,
+    best_approved_run: ExperimentRun | None = None,
 ) -> list[str]:
-    """Rules that reject a run without asking the LLM. An empty list means the run passes."""
-    reasons = []
+    """Rules that reject a run without calling the LLM."""
+    reasons: list[str] = []
     mean_score = run.score_mean
     std_score = run.score_std or 0.0
 
+    # 1. Score mismatch
     if checks.recomputed_score is not None and mean_score is not None:
-        tolerance = max(std_score, SCORE_MISMATCH_RELATIVE_TOLERANCE * abs(mean_score), 1e-9)
+        tolerance = max(std_score, SCORE_TOLERANCE_RELATIVE * abs(mean_score), 1e-9)
         if abs(checks.recomputed_score - mean_score) > tolerance:
             reasons.append(
-                f"The recomputed score {checks.recomputed_score:.4f} differs from the logged "
+                f"Recomputed score {checks.recomputed_score:.4f} differs from logged "
                 f"score {mean_score:.4f} by more than {tolerance:.4f}."
             )
 
-    holdout_score = checks.recomputed_holdout_score
-    if holdout_score is None:
-        holdout_score = run.holdout_score
+    # 2. Holdout gap
+    holdout_score = checks.recomputed_holdout_score if checks.recomputed_holdout_score is not None else run.holdout_score
     if holdout_score is not None and mean_score is not None:
-        shortfall = mean_score - holdout_score if higher_is_better else holdout_score - mean_score
-        allowed_gap = max(HOLDOUT_GAP_STD_COUNT * std_score, HOLDOUT_GAP_RELATIVE * abs(mean_score))
+        shortfall = (mean_score - holdout_score) if higher_is_better else (holdout_score - mean_score)
+        allowed_gap = max(HOLDOUT_GAP_STD_MULTIPLIER * std_score, HOLDOUT_GAP_RELATIVE_LIMIT * abs(mean_score))
         if shortfall > allowed_gap:
             reasons.append(
-                f"The holdout score {holdout_score:.4f} is much worse than the validation "
-                f"score {mean_score:.4f}."
+                f"Holdout score {holdout_score:.4f} is significantly worse than validation "
+                f"score {mean_score:.4f} (shortfall {shortfall:.4f} > {allowed_gap:.4f})."
             )
 
-    for flag in checks.leakage_flags:
-        if flag.severity == "high":
-            reasons.append(f"High-severity leakage flag: {flag.description}")
+    # 3. Leakage flags
+    high_flags = [f for f in checks.leakage_flags if f.severity == "high"]
+    if high_flags:
+        reasons.extend(f"High-severity leakage: {f.description}" for f in high_flags)
+
+    medium_flags = [f for f in checks.leakage_flags if f.severity == "medium"]
+    if len(medium_flags) >= 2:
+        reasons.append(f"Multiple medium-severity leakage flags detected ({len(medium_flags)}).")
+
+    # 4. Train-validation overlap
+    if checks.train_validation_overlap > TRAIN_VAL_OVERLAP_TOLERANCE:
+        reasons.append(
+            f"Train/validation overlap detected: {checks.train_validation_overlap} examples overlap."
+        )
+
+    # 5. Large jump with leakage flag
+    if best_approved_run and best_approved_run.score_mean is not None and mean_score is not None:
+        jump = (mean_score - best_approved_run.score_mean) if higher_is_better else (best_approved_run.score_mean - mean_score)
+        if jump > LARGE_SCORE_JUMP_STD_MULTIPLIER * max(std_score, 1e-6) and checks.leakage_flags:
+            reasons.append(
+                f"Score jump ({jump:+.4f}) is abnormally large (> {LARGE_SCORE_JUMP_STD_MULTIPLIER}x std) while leakage flags are present."
+            )
+
     return reasons
 
 
-def build_checks_task(ledger: Ledger, run: ExperimentRun, agent_context: AgentContext) -> str:
+def run_evaluator(
+    ledger: Ledger, agent_context: AgentContext, run: ExperimentRun
+) -> ExperimentRun:
+    """Evaluate one run and return it with verdict, reasons, gain_vs_best, counted_gain."""
+    event_bus = agent_context.event_bus
+    event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, f"checking {run.experiment_id}")
+
+    # Best approved run prior to this run
+    prior_approved = [
+        r for r in ledger.runs
+        if r.approved and r.experiment_id != run.experiment_id
+    ]
+    higher_is_better = ledger.brief.higher_is_better
+    best_prior = (
+        (max(prior_approved, key=lambda r: r.score_mean) if higher_is_better else min(prior_approved, key=lambda r: r.score_mean))
+        if prior_approved
+        else None
+    )
+
     workspace = agent_context.workspace
-    direction = "higher" if ledger.plan.higher_is_better else "lower"
-    dataset_cols_text = describe_dataset_columns(workspace.project_folder, ledger.brief)
-    return (
-        f"Independently check the run {run.experiment_id}. Write your own scoring code. You may "
-        "read the run's script to see which files it used, but do not import from it.\n"
-        f"Run: {describe_run(ledger, run)}\n"
+    direction = "higher" if higher_is_better else "lower"
+    task_text = (
+        f"Independently check the run {run.experiment_id}.\n"
+        f"Run: {run.headline}\n"
         f"Run script: {run.script_path}\n"
-        f"Saved validation predictions: {run.validation_predictions_path or 'none'}\n"
+        f"Saved validation predictions: {run.validation_predictions_path}\n"
         f"Saved test predictions: {run.test_predictions_path}\n"
         f"Splits file: {workspace.splits_path}\n"
-        f"Features version used: {run.feature_version}\n"
-        f"Primary metric: {ledger.plan.primary_metric} ({direction} is better)\n"
-        f"Project folder (read only): {workspace.project_folder}\n\n"
-        "Do these checks:\n"
-        "1. Recompute the primary metric on each validation split from the saved validation "
-        "predictions and the true labels, using the splits file. Report the mean.\n"
-        "   - Use `from mlagent_tools import load_splits, load_val_preds_with_labels` to reliably "
-        "load splits and align validation predictions with true labels by example_id.\n"
-        "   - Match predictions to true labels correctly: for fold k, take rows where fold == k. "
-        "Use their example_id to look up the true label in the original training data (for tables: "
-        "train_df.iloc[val_df['example_id']] or train_df.loc[val_df['example_id']]). If the file "
-        "has a dataset ID column (like PassengerId), you may join on that ID column. NEVER assume "
-        "rows in validation_predictions.csv follow 0..N order or align with train.csv without "
-        "mapping by example_id!\n"
-        "2. Recompute the score on the holdout examples (fold -1), if any and if predictions "
-        "exist for them, matching true labels by example_id the same way.\n"
-        "3. Look for leakage. Tables: does any single column predict the target almost "
-        "perfectly on its own? Check correlation or AUC on substantial sample sizes. Note: For "
-        "high-cardinality columns with unique values (names, cabin strings, IDs), single-row "
-        "groups trivially have 100% purity; this is NOT leakage. Do not report leakage for columns "
-        "just because unique categories have small counts. Other data: do validation examples also "
-        "appear in the training part (same file, text, speaker, near-duplicate)? Does the model "
-        "use an id, a file name or any post-outcome field that gives the answer away?\n\n"
-        f"Rules: write only inside {workspace.evaluation_folder(run.experiment_id)}. "
-        "Never change files in the experiment folder.\n\n"
-        f"{describe_brief(ledger)}\n\n"
-        f"{dataset_cols_text}\n\n"
+        f"Primary metric: {ledger.brief.primary_metric} ({direction} is better)\n"
+        f"Project folder: {workspace.project_folder}\n\n"
+        "Instructions:\n"
+        "1. Recompute the primary metric on each validation split using `from mlagent_tools import load_splits, load_val_preds_with_labels`.\n"
+        "2. Recompute the score on fold -1 holdout examples if present.\n"
+        "3. Check for target leakage or train-test overlap.\n\n"
         f"{VALIDATION_PREDICTIONS_FORMAT_TEXT}\n\n"
         f"{SPLITS_FORMAT_TEXT}"
     )
 
-
-def build_unverified_evaluation(run: ExperimentRun, problem: str) -> Evaluation:
-    """When the checks cannot run, approve with a visible warning instead of stalling the loop."""
-    return Evaluation(
-        experiment_id=run.experiment_id,
-        verdict="approve",
-        reasons=[f"The independent checks could not run ({problem}). Approved without checks."],
-        checks={"unverified": True},
-    )
-
-
-def run_evaluator(ledger: Ledger, agent_context: AgentContext, experiment_id: str) -> Evaluation:
-    event_bus = agent_context.event_bus
-    run = ledger.find_run(experiment_id)
-    if run is None or run.crashed:
-        raise AgentFailedError(
-            f"The Evaluator was asked to check {experiment_id}, which has no result."
-        )
-    event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, f"checking {experiment_id}")
-
-    coder_result = run_coder(
-        task_text=build_checks_task(ledger, run, agent_context),
+    coder_res = run_coder(
+        task_text=task_text,
         result_tag=RESULT_TAG,
-        result_keys_text=CHECKS_RESULT_KEYS_TEXT,
-        working_folder=agent_context.workspace.evaluation_folder(experiment_id),
+        result_keys_text=CHECKS_RESULT_KEYS,
+        working_folder=workspace.evaluation_folder(run.experiment_id),
         script_name="check_run.py",
         caller_key=AGENT_KEY,
         ledger=ledger,
         agent_context=agent_context,
     )
-    checks = None
-    problem = coder_result.error_text or "no result"
-    if coder_result.succeeded:
+
+    checks: EvaluationChecks | None = None
+    if coder_res.succeeded:
         try:
-            checks = EvaluationChecks.model_validate(coder_result.result_data)
-        except ValidationError as error:
-            problem = f"the checks did not follow the contract: {error}"
+            checks = EvaluationChecks.model_validate(coder_res.result_data)
+        except ValidationError:
+            checks = None
+
     if checks is None:
-        event_bus.emit(EventType.WARNING, AGENT_NAME, f"{experiment_id} approved WITHOUT checks")
-        return build_unverified_evaluation(run, problem)
+        event_bus.emit(EventType.WARNING, AGENT_NAME, f"{run.experiment_id} approved without independent checks")
+        run.verdict = "approve"
+        run.verdict_reasons = ["Independent checks script failed; approved unverified."]
+        run.checks = {"unverified": True}
+    else:
+        run.checks = checks.model_dump()
+        hard_reasons = hard_check_reasons(run, checks, higher_is_better, best_prior)
+        if hard_reasons:
+            run.verdict = "reject"
+            run.verdict_reasons = hard_reasons
+            event_bus.emit(EventType.DECISION, AGENT_NAME, f"{run.experiment_id} rejected by hard rules")
+        else:
+            prompt = VERDICT_PROMPT.format(
+                digest=build_digest(AGENT_KEY, ledger),
+                run_line=run.headline,
+                checks_text=json.dumps(checks.model_dump(), indent=1),
+            )
+            answer = agent_context.llm_client.ask_structured(AGENT_NAME, prompt, VerdictAnswer)
+            run.verdict = answer.verdict
+            run.verdict_reasons = answer.reasons
 
-    hard_reasons = hard_check_reasons(run, checks, ledger.plan.higher_is_better)
-    if hard_reasons:
-        event_bus.emit(EventType.DECISION, AGENT_NAME, f"{experiment_id} rejected by a hard rule")
-        return Evaluation(
-            experiment_id=experiment_id,
-            verdict="reject",
-            reasons=hard_reasons,
-            checks=checks.model_dump(),
-        )
+    # Compute gain vs best and counted_gain
+    if run.verdict == "approve" and run.score_mean is not None:
+        if best_prior and best_prior.score_mean is not None:
+            gain = (run.score_mean - best_prior.score_mean) if higher_is_better else (best_prior.score_mean - run.score_mean)
+            run.gain_vs_best = round(gain, 6)
+            run.counted_gain = is_counted_gain(run.validation_scores, best_prior.validation_scores, higher_is_better)
+        else:
+            run.gain_vs_best = 0.0
+            run.counted_gain = True
+    else:
+        run.counted_gain = False
 
-    common_values = build_common_prompt_values(AGENT_KEY, ledger, agent_context)
-    prompt = render_prompt(
-        VERDICT_PROMPT,
-        **common_values,
-        run_line=describe_run(ledger, run),
-        checks_text=json.dumps(checks.model_dump(), indent=1),
-    )
-    answer = agent_context.llm_client.ask_structured(AGENT_NAME, prompt, VerdictAnswer)
-    verdict_word = "approved" if answer.verdict == "approve" else "rejected"
-    event_bus.emit(EventType.DECISION, AGENT_NAME, f"{experiment_id} {verdict_word}")
-    return Evaluation(
-        experiment_id=experiment_id,
-        verdict=answer.verdict,
-        reasons=answer.reasons,
-        checks=checks.model_dump(),
-    )
+    event_bus.emit(EventType.DECISION, AGENT_NAME, f"{run.experiment_id} {run.status}")
+    return run
