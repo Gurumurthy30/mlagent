@@ -70,6 +70,8 @@ class Workspace:
         return self.ledger_path.exists() or self.previous_ledger_path.exists()
 
     def create_folders(self) -> None:
+        from mlagent.contract_tools import CONTRACT_TOOLS_SOURCE
+
         for folder in (
             self.memory_folder,
             self.logs_folder,
@@ -77,6 +79,15 @@ class Workspace:
             self.report_folder,
         ):
             folder.mkdir(parents=True, exist_ok=True)
+
+        for tools_path in (
+            self.artifacts_folder / "mlagent_tools.py",
+            self.root / "mlagent_tools.py",
+        ):
+            try:
+                tools_path.write_text(CONTRACT_TOOLS_SOURCE, encoding="utf-8")
+            except OSError:
+                pass
 
     def archive_existing(self) -> Path:
         """Rename the current workspace so a fresh start never deletes old results."""

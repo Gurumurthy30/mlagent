@@ -86,14 +86,21 @@ def build_shell_command(shell_text: str) -> list[str]:
     return ["bash", "-c", shell_text]
 
 
-def build_child_environment() -> dict[str, str]:
+def build_child_environment(extra_paths: list[str | Path] | None = None) -> dict[str, str]:
     """Force UTF-8 so printed text reads the same on Windows and Linux. No .pyc clutter."""
-    return {
+    env = {
         **os.environ,
         "PYTHONUTF8": "1",
         "PYTHONIOENCODING": "utf-8",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
+    if extra_paths:
+        existing_pp = os.environ.get("PYTHONPATH", "")
+        paths_str = [str(p) for p in extra_paths if p]
+        if existing_pp:
+            paths_str.append(existing_pp)
+        env["PYTHONPATH"] = os.pathsep.join(paths_str)
+    return env
 
 
 def kill_process_tree(process: subprocess.Popen) -> None:
@@ -161,8 +168,13 @@ class CodeRunner:
                 stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
-                errors="replace",
-                env=build_child_environment(),
+                env=build_child_environment(
+                    [
+                        self.workspace.artifacts_folder,
+                        self.workspace.root,
+                        self.workspace.project_folder,
+                    ]
+                ),
             )
         except OSError as error:
             result = self._build_result(command_text, -1, "", str(error), False, started_at)

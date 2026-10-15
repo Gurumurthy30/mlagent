@@ -89,9 +89,9 @@ def test_the_diagnosis_task_and_the_decision_prompt(make_agent_context, workspac
     assert "class 'churn' has recall 0.41" in review_prompt
     assert "BUDGET: 14 experiment rounds are left." in review_prompt
     assert "Experiment rounds finished: 1 of 15" in review_prompt
-    assert "finish only after 3 rounds" in review_prompt
+    assert "Finish is legal only after 3 rounds" in review_prompt
     assert "Tune needs an approved run and 2 rounds" in review_prompt
-    assert "Data at most 2 times" in review_prompt
+    assert "Data is legal at most 2 times" in review_prompt
     assert "up to 5 short points" in review_prompt
 
 

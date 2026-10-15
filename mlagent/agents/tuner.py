@@ -33,10 +33,12 @@ RESULT_TAG = "RESULT"
 TUNE_RESULT_KEYS_TEXT = (
     MODEL_RESULT_KEYS_TEXT
     + """
-- "model_params": object, the best parameters the search found
-- "trials_run": integer, how many trials finished"""
+- "model_params": flat object, the parameters of the best trial, named as in the source \
+run's parameters so the team can compare them. When no trial beat the source parameters by \
+more than the noise, these are the source parameters
+- "trials_run": integer, how many trials finished (the first trial uses the source \
+parameters)"""
 )
-
 
 def pick_tune_targets(ledger: Ledger) -> list[ExperimentRun]:
     """The best approved run of each model family, best first, at most the top few."""

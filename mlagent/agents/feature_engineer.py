@@ -148,8 +148,9 @@ but not in test, because they cannot be used at prediction time.
 - Missing values: learn the fill value on the training examples in fit. Keep a missing \
 indicator column only when the to-do list says missingness matters.
 - Categories: an unseen category must not crash. Map it to an explicit unknown code.
-- Strings that hold numbers or dates are parsed. Placeholder values named in the EDA, for \
-example -999, become missing.
+- Strings that hold numbers or dates are parsed into numeric values (for example extract \
+numbers with pd.to_numeric(..., errors='coerce') or regex). Never leave numeric strings as raw \
+object or string columns. Placeholder values named in the EDA, for example -999, become missing.
 - Do not scale or normalize tables. The model script does that when its model needs it.
 - The returned DataFrame of apply_preparation must contain only numeric feature columns. \
 It must never include the target or raw string columns.
@@ -164,6 +165,12 @@ fit_<name>(train_table) learns its state on the training part of the split only,
 apply_<name>(table, state) returns new columns, and they are joined to the base columns of \
 the training part and of the validation part. For other data follow the style of the current \
 file. Score it the same way.
+- Column names: check that returned column names do not clash with existing base columns. If any \
+column name already exists in base columns, prefix or rename it (e.g. <name>_<col>) before joining \
+so columns NEVER clash.
+- Numeric output ONLY: apply_<name> must return ONLY numeric columns (e.g. integer or float). If \
+any returned column has string/object or non-numeric dtype, do NOT silently drop it! Reject the \
+candidate immediately: record error "non-numeric output: <col>" and scores null.
 - Use exactly the same model, settings and seed for the baseline and for every candidate, so a \
 difference comes from the candidate only.
 - Model: the family of the best run so far, in a small fast setting (for example 100 to 200 \
@@ -173,8 +180,8 @@ or raw strings).
 - Sample: at most 50000 training rows per split. State the sample size in proxy.
 - Time: score the candidates in the given order. Do not start a new candidate after 70 percent \
 of the time budget is used. Report the rest with scores null and error "skipped: time".
-- One failing candidate (an error, a wrong number of rows, NaN or infinite values) never stops \
-the script. Record scores null and the error."""
+- One failing candidate (an error, non-numeric output, wrong rows, clashing columns, NaN or \
+infinite values) never stops the script. Record scores null and the error."""
 
 FOUNDATION_PROMPT = """\
 You are the Feature Engineer of an ML team. Version 1 of the input preparation is the \
@@ -266,7 +273,9 @@ embeddings
 never build one candidate on top of another.
 - For tables a candidate is two functions: fit_<name>(train_table) returns a state, or None \
 when nothing is learned, and apply_<name>(table, state) returns a DataFrame of new numeric \
-columns whose names start with the candidate name, with the same index as table. For other data \
+columns whose names start with the candidate name, with the same index as table. Output columns \
+must be numeric (use pd.factorize, frequency/count encoding, or extract numbers; never return \
+raw strings or object columns). Names must not clash with existing columns. For other data \
 follow the style of the current file.
 - The code is complete and runnable, under {max_code_chars} characters, with no placeholders \
 and no pseudo code. numpy as np and pandas as pd are already imported. It never uses the \

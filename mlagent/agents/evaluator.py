@@ -18,9 +18,9 @@ from mlagent.agents.base import (
     render_prompt,
 )
 from mlagent.agents.coder import run_coder
-from mlagent.digest import describe_brief, describe_run
+from mlagent.digest import describe_brief, describe_dataset_columns, describe_run
 from mlagent.events import EventType
-from mlagent.script_contract import SPLITS_FORMAT_TEXT
+from mlagent.script_contract import SPLITS_FORMAT_TEXT, VALIDATION_PREDICTIONS_FORMAT_TEXT
 from mlagent.settings import HOLDOUT_GAP_RELATIVE, SCORE_MISMATCH_RELATIVE_TOLERANCE
 from mlagent.state import Evaluation, ExperimentRun, Ledger, Verdict
 
@@ -33,58 +33,87 @@ CHECKS_RESULT_KEYS_TEXT = """\
 - "recomputed_score": number or null, the mean over the validation splits of the primary \
 metric, recomputed by your own code from the saved validation predictions and the true labels. \
 Use null only when it truly cannot be computed
-- "recomputed_holdout_score": number or null, the same for the holdout examples
-- "leakage_flags": list of objects {"description": text with the numbers, "severity": "high", \
-"medium" or "low"}. Use high for a single input that predicts the target almost perfectly, \
-for the target or an id that encodes it, and for validation examples that also sit in the \
-training part. Use medium for suspicious but explainable signals, and low for minor ones. An \
-empty list means you checked and found nothing
+- "recomputed_holdout_score": number or null, the same for the holdout examples. Null when \
+there is no holdout
+- "leakage_flags": list of objects {"description": text that names the column, file or step \
+and gives the numbers, "severity": "high", "medium" or "low"}. Use high for a single input that \
+predicts the target almost perfectly, for the target or an id that encodes it, for an input that \
+only exists after the outcome, and for validation examples that also sit in the training part. \
+Use medium for suspicious but explainable signals, and low for minor ones. An empty list means \
+you checked and found nothing
 - "train_validation_overlap": integer, how many validation examples also appear in the \
-training part of the same split (same row, file, text, speaker, group or near-duplicate)
-- "notes": list of short texts about anything else you noticed, for example predictions that \
-are constant, outside the valid range or contain missing values, a score that is much better \
-than a trivial baseline, a very uneven spread of scores between splits, or a check that could \
-not run and why"""
+training part of the same split (same row, file, text, speaker, group or near-duplicate). \
+Compare content, not only ids
+- "notes": list of short texts about anything else you noticed: the score of each split, the \
+score of a trivial baseline (most common class, the mean, or the last value) when it is quick \
+to compute, predictions that are constant, outside the valid range, the wrong number of rows or \
+contain missing values, a very uneven spread between splits, and any check that could not run \
+and why"""
 
 VERDICT_PROMPT = """\
-You are the Evaluator of an ML team. You are an independent reviewer. You do not trust the \
-Modeler's numbers, and you never see the Modeler's reasoning. You only see what the checks \
-found. Your job is to say whether the score is honest and usable, not whether it is high. A \
-modest score that is honest is approved. A great score that is leaked is rejected.
+You are the Evaluator of an ML team. You are the independent check between a run and the \
+team's memory. You do not trust the Modeler's numbers, and you never see the Modeler's \
+reasoning. You only see what the checks found. Your job is to say whether the score is honest \
+and usable, not whether it is high. A modest score that is honest is approved. A great score \
+that is leaked is rejected. You do not judge the choice of model: a weak but honest result is \
+for the Reviewer.
 
 {run_rules}
 
-WHAT THE TEAM KNOWS:
+WHAT THE TEAM KNOWS (plan, leakage risks from the EDA, runs so far, earlier rejections):
 {digest}
 
 THE RUN:
 {run_line}
 
-THE INDEPENDENT CHECKS (already passed the automatic hard rules):
+THE INDEPENDENT CHECKS (they already passed the automatic rules for score mismatch, holdout \
+gap, finite numbers and missing files, so small gaps are not your concern):
 {checks_text}
 
-Think it through:
-1. Does the recomputed score match the logged score, and the holdout score agree with the \
-validation scores? A small gap is normal noise. A large one means overfitting to the splits or \
-a leak.
-2. Is there any high leakage flag, or any overlap between training and validation? Real \
-overlap, or an input that predicts the target almost perfectly for a reason the task does not \
-explain, means the score is not honest. Reject.
-3. Do medium and low flags have an innocent explanation in the task or the EDA (for example \
-a column that really is a strong signal available at prediction time)? If the explanation is \
-not in the information above, treat the flag as real. Several medium flags together count as \
-a serious concern.
-4. Is the score implausible for this task, for example near perfect when the team's earlier \
-runs were far lower, or the same score on every split?
-5. Are the predictions usable: right form for the metric, no missing values, not constant?
-If a check could not run, say so. Never invent a result for it.
+Write the reasons first. They are your thinking, and the verdict must follow from them. Give \
+1 to 4 short reasons. Each one names the check and the number it relies on. Go through these \
+in order and skip a check that shows nothing:
+1. Leakage. Reject for a high flag, for an overlap above 1 percent of the validation \
+examples, and for a run that uses an input or step named in the known leakage risks. Name the \
+column or file and the number.
+2. Medium and low flags. A flag has an innocent explanation only when the task, the plan or \
+the EDA above gives it, for example a column that really is available at prediction time. If \
+no explanation is above, the flag is real. Reject for one medium flag that points at the \
+target or an id, and for two or more medium flags without explanation. Low flags alone never \
+reject: mention them.
+3. Plausibility. Compare with the earlier runs and with the trivial baseline in the notes, if \
+given. A large jump after a small change is a reason to look harder at the flags, but it does \
+not reject by itself. The same score on every split, or a score at the perfect value, is a \
+reason to reject unless the task explains it.
+4. Usable predictions. Right form for the metric (probabilities, labels or numbers), the \
+right number of rows, no missing values, not constant. Broken predictions are a reject.
+5. Checks that did not run. Say which and why. Do not reject for that alone, and never invent \
+a result for it.
 
-Decide. Approve when the result looks honest and usable. Reject when it looks leaked, \
-overfitted or broken. Reject for dishonesty or breakage only. A weak result is for the \
-Reviewer to judge, not you. When unsure, prefer reject over approve for leakage, because an \
-approved leak misleads every later round.
-Give 1 to 3 short reasons, also when you approve, each with the number or check it relies on.
-Return JSON: verdict (approve or reject), reasons (list of texts)."""
+Then the verdict. Approve when the result looks honest and usable. Reject when it looks \
+leaked, overfitted or broken. A reject needs a finding you can name from the checks. A \
+suspicion without a finding is not enough. A real, unexplained leakage flag is enough, because \
+one approved leak misleads every later round. When you reject, make the last reason say what \
+the Modeler must fix, because the next round reads it. Write each reason so it makes sense on \
+its own, without the others.
+
+Example of the style only, a reject (do not copy its content):
+reasons:
+- The column cancel_date alone scores AUC 0.99 (high flag), and finding_005 says it is filled \
+in after the customer cancels, so it gives the answer away.
+- The recomputed score 0.981 equals the logged 0.981, so the number is right but the setup \
+is not.
+- Fix: remove cancel_date from the inputs and run again.
+verdict: reject
+
+Example of the style only, an approve:
+reasons:
+- The recomputed score 0.742 equals the logged 0.742, and the holdout score 0.738 agrees.
+- No leakage flags and an overlap of 0 of 1,240 validation examples.
+- Predictions are probabilities in range, with 3,100 rows, as the metric needs. The score is \
+modest, which is not a reason to reject.
+verdict: approve
+Return JSON: reasons (list of texts, written first), verdict (approve or reject)."""
 
 
 class LeakageFlag(BaseModel):
@@ -142,6 +171,7 @@ def hard_check_reasons(
 def build_checks_task(ledger: Ledger, run: ExperimentRun, agent_context: AgentContext) -> str:
     workspace = agent_context.workspace
     direction = "higher" if ledger.plan.higher_is_better else "lower"
+    dataset_cols_text = describe_dataset_columns(workspace.project_folder, ledger.brief)
     return (
         f"Independently check the run {run.experiment_id}. Write your own scoring code. You may "
         "read the run's script to see which files it used, but do not import from it.\n"
@@ -156,20 +186,28 @@ def build_checks_task(ledger: Ledger, run: ExperimentRun, agent_context: AgentCo
         "Do these checks:\n"
         "1. Recompute the primary metric on each validation split from the saved validation "
         "predictions and the true labels, using the splits file. Report the mean.\n"
-        "   - In the validation predictions file, identify the predicted column (matches the "
-        "target or probabilities, NOT the id column).\n"
-        "   - Match predictions to true labels correctly: if the predictions file has an ID column "
-        "(like PassengerId), join with the original data on that ID column. Never confuse "
-        "0-based row positions with 1-based ID numbers.\n"
+        "   - Use `from mlagent_tools import load_splits, load_val_preds_with_labels` to reliably "
+        "load splits and align validation predictions with true labels by example_id.\n"
+        "   - Match predictions to true labels correctly: for fold k, take rows where fold == k. "
+        "Use their example_id to look up the true label in the original training data (for tables: "
+        "train_df.iloc[val_df['example_id']] or train_df.loc[val_df['example_id']]). If the file "
+        "has a dataset ID column (like PassengerId), you may join on that ID column. NEVER assume "
+        "rows in validation_predictions.csv follow 0..N order or align with train.csv without "
+        "mapping by example_id!\n"
         "2. Recompute the score on the holdout examples (fold -1), if any and if predictions "
-        "exist for them.\n"
+        "exist for them, matching true labels by example_id the same way.\n"
         "3. Look for leakage. Tables: does any single column predict the target almost "
-        "perfectly on its own? Other data: do validation examples also appear in the training "
-        "part (same file, text, speaker, near-duplicate)? Does the model use an id, a file "
-        "name or any field that gives the answer away?\n\n"
+        "perfectly on its own? Check correlation or AUC on substantial sample sizes. Note: For "
+        "high-cardinality columns with unique values (names, cabin strings, IDs), single-row "
+        "groups trivially have 100% purity; this is NOT leakage. Do not report leakage for columns "
+        "just because unique categories have small counts. Other data: do validation examples also "
+        "appear in the training part (same file, text, speaker, near-duplicate)? Does the model "
+        "use an id, a file name or any post-outcome field that gives the answer away?\n\n"
         f"Rules: write only inside {workspace.evaluation_folder(run.experiment_id)}. "
         "Never change files in the experiment folder.\n\n"
         f"{describe_brief(ledger)}\n\n"
+        f"{dataset_cols_text}\n\n"
+        f"{VALIDATION_PREDICTIONS_FORMAT_TEXT}\n\n"
         f"{SPLITS_FORMAT_TEXT}"
     )
 

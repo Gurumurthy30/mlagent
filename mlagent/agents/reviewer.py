@@ -15,8 +15,9 @@ from mlagent.agents.base import (
     render_prompt,
 )
 from mlagent.agents.coder import run_coder
-from mlagent.digest import describe_brief, describe_run
+from mlagent.digest import describe_brief, describe_dataset_columns, describe_run
 from mlagent.events import EventType
+from mlagent.script_contract import SPLITS_FORMAT_TEXT, VALIDATION_PREDICTIONS_FORMAT_TEXT
 from mlagent.settings import (
     MAX_DATA_REENTRIES,
     MAX_REVIEW_INSTRUCTIONS,
@@ -32,20 +33,101 @@ AGENT_NAME = display_name(AGENT_KEY)
 RESULT_TAG = "DIAG"
 
 DIAG_RESULT_KEYS_TEXT = """\
-- "weak_spots": list of short texts: where the model fails, each with numbers. Look at errors \
-per class or per segment, large residuals, ranges of the target or inputs with bad scores, \
-and groups, sources or time periods with bad scores. Also state the spread of the score \
-between validation splits, the gap between validation and holdout, and whether the model \
-looks under-fitted (poor everywhere) or over-fitted (good on training, worse on validation)
+- "weak_spots": list of at most 5 short texts, the worst first. Each names one segment (a \
+class, a range of the target or of an input, a group, a source, a time period), how many \
+validation examples it holds, the primary metric or error rate in it, and the same number \
+over all examples. Report only segments with at least 20 examples where the result is \
+clearly worse than average. Take the true labels from the training data by example_id
 - "comparison": text about where this run gained or lost against the previous best run, with \
-numbers, or "" when there is no earlier run
-- "notes": list of other short observations, for example calibration problems, a prediction \
-shift between validation and test, or which inputs the model relies on most"""
+numbers: the score change in the main segments, and how many examples the previous run had \
+right that this run has wrong, and the reverse (join the two validation prediction files on \
+example_id). Write "" when there is no earlier run
+- "notes": list of other short texts, each starting with a label:
+  "SPREAD:" the score on each validation split and the difference between the best and the \
+worst
+  "HOLDOUT GAP:" the holdout score against the mean validation score (the rows with fold -1)
+  "FIT:" under-fitted, over-fitted or unknown. Say under-fitted or over-fitted only when the \
+training score is known from the run's own results. Otherwise write unknown, do not guess
+  "SHIFT:" how the test predictions differ from the validation predictions (class shares or \
+mean prediction)
+  "OTHER:" calibration problems, or the inputs the model relies on most
+Write every number with at most 3 digits after the point, and keep each text under 200 \
+characters."""
 
 REVIEW_PROMPT = """\
-You are the Reviewer of an ML team, the senior who reads the results and says what to do next. \
-You decide where the team's limited rounds are spent. Be specific: the next agent can only act \
-on what you tell it.
+You are the Reviewer of an ML team, the senior who reads the results and decides what the \
+team does next. The team has few rounds, so each one must count. The next agent sees only \
+your instructions or your question, not your assessment. Put the numbers and names it needs \
+inside them.
+
+HOW TO DECIDE
+Write the assessment as five short lines, in this order, and let them lead to your choice:
+1. LAST ROUND: what changed, the score before and after, and whether the gain is marked as \
+counted. A gain that is not counted, or is smaller than the spread between validation \
+splits, is noise. Do not build on it.
+2. BOTTLENECK: the weakest spot in the diagnosis, with its numbers.
+3. TRIED: what was tried and did not help (runs, features, earlier reviews, and notes where \
+code replaced a choice). Do not send the team back to it.
+4. ROUNDS: how many are left and what that allows (see below).
+5. LIMITS: which focuses are illegal now (see the limits below).
+
+Match the bottleneck to a focus, taking the first rule that fits:
+- Validation and holdout disagree, a score looks too good, or the splits disagree strongly \
+with no clear cause: data. Ask what could explain it.
+- The results point at something the EDA never looked at: data.
+- Weak on named classes, segments, ranges or periods: features aimed at them. When features \
+rounds in a row have given no counted gain, a different model instead.
+- Poor on every segment, and the diagnosis says under-fitted: a stronger or more flexible \
+model.
+- Good on some splits and bad on others, or the diagnosis says over-fitted: a simpler or more \
+regularized model.
+- The model family is strong, the features are stable, and its settings were never \
+searched: tune.
+- None of these, and more work is unlikely to beat the noise: finish.
+When two rules fit, take the step that can be done in one round and checked with one number.
+
+WHAT THE ROUNDS ALLOW
+- More than 3 rounds left: one bold step is fine, such as a new family of features or \
+another model family.
+- 2 or 3 left: the safest gain, such as a targeted features step or a tune of the best model.
+- The last round: only a cheap step that cannot damage the best run, or finish when it is \
+legal. Combining the best runs is the Submitter's job, so do not spend a round on it.
+
+THE FIVE FOCUSES
+- features: new input preparation steps (for tables, new columns)
+- model: a different model family or setup
+- tune: a bounded search over the settings of the best model
+- data: more analysis of the data, when the results point at something the EDA never checked
+- finish: only when more work is unlikely to help
+
+LIMITS ENFORCED BY CODE
+The code replaces an illegal choice, so pick the best legal one yourself. Finish is legal \
+only after {min_loops} rounds that include a features round and a model round, and with an \
+approved run. Tune needs an approved run and {tune_gap} rounds since the last tune. Data is \
+legal at most {max_reentries} times. The same focus {stuck_limit} times in a row without a \
+counted gain is replaced. Change one thing at a time, so that the counted gain marks tell \
+which change helped.
+
+WHAT TO WRITE
+- assessment: the five lines above.
+- reason: one sentence with the evidence that decides the focus.
+- focus: one of the five words.
+- instructions: up to {max_instructions} short points for the agent that runs next (the \
+Feature Engineer for features, the Modeler for model, the Tuner for tune). Every point names \
+the weak spot or the evidence with its numbers, and the concrete action. Leave it empty for \
+finish and for data.
+  Good for features: "Errors are 3 times higher where income is missing (180 examples): add \
+a missing flag for income and the ratio of income to loan amount."
+  Good for model: "The linear model is poor on all splits (0.61): try a gradient boosted \
+tree with depth 6 and 600 trees."
+  Good for tune: "Search learning rate 0.01 to 0.1 on a log scale, leaves 15 to 63, \
+minimum samples per leaf 10 to 100. Keep the features."
+  Bad: "improve the features", "try other models", "tune more".
+  Also say what to avoid, with the reason, when something failed before.
+- question: only for data. One specific question that one script can answer, naming the \
+columns to look at, for example: "Do the 200 validation examples with the largest errors \
+share a source or a month? Compare the columns source and month for them against the rest." \
+Otherwise an empty string.
 
 {run_rules}
 
@@ -57,53 +139,7 @@ DIAGNOSIS OF THE BEST RUN (from its saved validation predictions):
 
 BUDGET: {rounds_left} experiment rounds are left.
 
-Think it through before you choose:
-1. What changed in the last round, and was the gain counted? A gain that is not marked as \
-counted is noise. Do not build on it.
-2. What is the bottleneck? Read the diagnosis:
-   - weak on specific classes, segments or ranges: new input preparation aimed at them \
-(features), or a different kind of model
-   - features keep adding gains: more features. Several features rounds without a counted \
-gain: switch to a model round
-   - the model is under-fitted: a stronger or more flexible model
-   - the model is over-fitted or the splits disagree strongly: a simpler or more regularized \
-model, or data work
-   - validation and holdout disagree, or something looks leaked: data (ask about it)
-   - a strong model family and stable features, but its settings were never searched: tune
-   - results point to something the EDA never checked: data
-3. What was already tried? Read the runs, the features tried and the previous reviews, \
-including notes where code replaced a choice. Do not send the team back to something that \
-failed.
-4. How many rounds are left? With few rounds left, choose the option with the best expected \
-gain per round: cheap, safe steps. Finish when more work is unlikely to beat the noise.
-
-Choose the focus of the next round:
-- features: new input preparation steps (for tables, new columns)
-- model: a different model family or setup
-- tune: a bounded search over the settings of the best models
-- data: more analysis of the data, when the results point to something the EDA never checked. \
-Give the question.
-- finish: only when more work is unlikely to help.
-The code enforces these rules and replaces an illegal choice: finish only after \
-{min_loops} rounds that include a features round and a model round, and with an approved run. \
-Tune needs an approved run and {tune_gap} rounds since the last tune. Data at most \
-{max_reentries} times. The same focus {stuck_limit} times in a row without a counted gain is \
-replaced. Change one thing at a time and read the counted gain marks in the reviews. Pick the \
-best legal choice yourself, so the code does not have to.
-
-Give:
-- assessment: what improved, what did not, where the bottleneck is. Use numbers from the \
-runs and the diagnosis.
-- focus: one of the five words above.
-- reason: one sentence that names the evidence.
-- instructions: up to {max_instructions} short points for the agent that runs next, written \
-for that agent (the Feature Engineer for features, the Modeler for model, the Tuner for tune). \
-Each point is concrete: a kind of feature or a weak spot to attack, a model family or setting \
-to try, a range to search, something to avoid because it failed. No general advice such as \
-"improve the model". Leave it empty for finish.
-- question: only for data. One specific question about the data that one script can answer. \
-Otherwise an empty string.
-Return JSON: assessment, focus, reason, instructions, question."""
+Write your review now. Return JSON: assessment, reason, focus, instructions, question."""
 
 
 class ReviewDraft(BaseModel):
@@ -131,6 +167,7 @@ def build_diagnosis_task(
         previous_text = f"{previous_best_run.experiment_id}, predictions at "
         previous_text += previous_best_run.validation_predictions_path or "none"
     direction = "higher" if ledger.plan.higher_is_better else "lower"
+    dataset_cols_text = describe_dataset_columns(workspace.project_folder, ledger.brief)
     return (
         "Diagnose where the best model fails, using its saved validation predictions and the "
         "true labels. Print a short result.\n"
@@ -140,12 +177,23 @@ def build_diagnosis_task(
         f"Splits file: {workspace.splits_path}\n"
         f"Primary metric: {ledger.plan.primary_metric} ({direction} is better)\n"
         f"Project folder (read only): {workspace.project_folder}\n\n"
+        "ALIGNMENT AND DATA RULES:\n"
+        "- Use `from mlagent_tools import load_splits, load_val_preds_with_labels` to reliably "
+        "load splits and align validation predictions with true labels by example_id.\n"
+        "- You MUST check that rows matched: if 0 rows matched (or merge produced empty DataFrame), "
+        "raise an exception immediately! Never report zero errors or a healthy model when rows "
+        "did not match.\n"
+        "- Only use real columns that exist in the dataset (see column list below). Never invent "
+        "or guess column names.\n\n"
         "Look at whatever fits this data: error by class, by value range or by group; the "
         "worst predicted examples and what they have in common (length, source, missing "
         "fields, speaker); confidence and calibration when the predictions are probabilities. "
         "When a previous best run exists, say where the best run gained or lost.\n"
         f"Write only inside {workspace.artifacts_folder / AGENT_KEY}.\n\n"
-        f"{describe_brief(ledger)}"
+        f"{describe_brief(ledger)}\n\n"
+        f"{dataset_cols_text}\n\n"
+        f"{VALIDATION_PREDICTIONS_FORMAT_TEXT}\n\n"
+        f"{SPLITS_FORMAT_TEXT}"
     )
 
 

@@ -152,7 +152,7 @@ def test_a_clean_run_goes_to_the_llm_for_the_verdict(make_agent_context):
     assert "do not trust" in verdict_prompt.lower()
     assert "experiment_001 | start | lightgbm | score 0.8100 +/- 0.0100" in verdict_prompt
     assert '"recomputed_score": 0.81' in verdict_prompt
-    assert "already passed the automatic hard rules" in verdict_prompt
+    assert "already passed the automatic rules" in verdict_prompt
 
 
 def test_the_llm_can_reject_a_run_the_hard_rules_passed(make_agent_context):

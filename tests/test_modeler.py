@@ -115,7 +115,7 @@ def test_the_baseline_choice_prompt_and_the_training_task(make_agent_context, wo
     assert (
         "Train the baseline from the plan: logistic regression on basic features" in choose_prompt
     )
-    assert "Never repeat a setup from the runs list" in choose_prompt
+    assert "Never repeat a setup from SETUPS TRIED" in choose_prompt
     assert "Time limit for one script run: 30 minutes" in choose_prompt
     assert "Model: lightgbm" in training_prompt
     assert 'Parameters: {"depth": 6}' in training_prompt

@@ -40,14 +40,52 @@ RESULT_TAG = "FINDINGS"
 EDA_FOLDER_NAME = "eda"
 
 DEFAULT_CHECKLIST = [
-    "label or target distribution",
-    "missing, empty or corrupt data",
-    "train versus test differences",
-    "duplicates and groups",
-    "leakage candidates",
-    "structure that decides a fair split (groups, time order, sources)",
-    "quick signal of the inputs against the target",
-    "size and format of the inputs (shapes, lengths, ranges)",
+    # The original eight, in the same order
+    "label or target distribution (class shares or value range, rare classes, outliers in the "
+    "target)",
+    "missing, empty or corrupt data (missing values per input, unreadable or empty files, "
+    "broken rows)",
+    "train versus test differences (inputs, value ranges, unseen categories, missingness, and "
+    "whether a simple model can tell train from test)",
+    "duplicates and groups (exact and near duplicates inside train and between train and test, "
+    "repeated entities, shared sources)",
+    "leakage candidates (inputs that nearly equal the target, ids, row order, timestamps, "
+    "columns missing from test)",
+    "structure that decides a fair split (groups, time order, sources, smallest class count "
+    "against the number of splits)",
+    "quick signal of the inputs against the target (the strongest single inputs, and the score "
+    "of a trivial baseline)",
+    "size and format of the inputs (shapes, lengths, ranges, units, encodings)",
+    # New: what the deliverable and the metric need
+    "deliverable and metric fit (the id column and row order the test file needs, what the "
+    "metric rewards, how it behaves on this target)",
+    "label quality (missing labels, conflicting labels for the same input, labels that differ by "
+    "source)",
+    # New: the inputs themselves
+    "input types and cardinality (numeric, categorical, text, datetime, id-like, constant and "
+    "near constant, high-cardinality columns)",
+    "outliers and extreme values in the inputs (impossible values, sentinel numbers such as "
+    "-1 or 9999, mixed units)",
+    "missingness pattern (is a value missing more often for one class, one source or in test "
+    "only, and does missing itself carry signal)",
+    "inconsistent values (spelling and case variants of one category, mixed date formats, "
+    "numbers stored as text)",
+    "redundant inputs (copies, near copies, very high correlation between inputs)",
+    # New: time and order
+    "time and order (date ranges of train and test, gaps, drift of the target or the inputs "
+    "over time or over row order)",
+    # New: by kind of data, skip what does not apply
+    "text inputs (length, language, encoding problems, empty texts, repeated texts)",
+    "image or audio inputs (sizes, channels or sample rates, durations, unreadable files, "
+    "class balance per source)",
+    "series and grouped records (frequency, gaps, length per series, history against the "
+    "forecast horizon)",
+    # New: what the budget allows
+    "compute cost (rows and input size against the time limit, what needs a subsample or a "
+    "cheaper model)",
+    "interactions and non-linear signal (does a small tree model beat the best single input, "
+    "which pairs of inputs matter)",
+    "anything odd you noticed that no item above covers",
 ]
 
 RESULT_KEYS_TEXT = """\

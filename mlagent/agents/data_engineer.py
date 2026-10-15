@@ -150,9 +150,17 @@ def find_missing_fields(brief: ProjectBrief) -> list[str]:
     return [field_name for field_name, is_known in checks.items() if not is_known]
 
 
-def clean_brief(brief: ProjectBrief) -> ProjectBrief:
-    """Keep the file list short and compute the large-file flag in code, not by the LLM."""
+def clean_brief(brief: ProjectBrief, project_folder: Path | None = None) -> ProjectBrief:
+    """Keep the file list short, verify real files on disk, and compute the large-file flag."""
     cleaned_brief = brief.model_copy(deep=True)
+    if project_folder is not None:
+        real_files = []
+        for file_info in cleaned_brief.files:
+            file_path = project_folder / file_info.path
+            if file_path.exists():
+                real_files.append(file_info)
+        if real_files:
+            cleaned_brief.files = real_files
     cleaned_brief.files = cleaned_brief.files[:MAX_FILES_IN_LISTING]
     cleaned_brief.has_large_files = any(file.size_mb >= BIG_FILE_MB for file in cleaned_brief.files)
     return cleaned_brief
@@ -198,7 +206,7 @@ def run_data_engineer(ledger: Ledger, agent_context: AgentContext) -> ProjectBri
             max_files=MAX_FILES_IN_LISTING,
         )
         reading = agent_context.llm_client.ask_structured(AGENT_NAME, prompt, BriefReading)
-        brief = clean_brief(reading.brief)
+        brief = clean_brief(reading.brief, agent_context.workspace.project_folder)
         missing_fields = find_missing_fields(brief)
         event_bus.emit(
             EventType.INFO,

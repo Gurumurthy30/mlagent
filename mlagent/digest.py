@@ -5,9 +5,10 @@ from settings.DIGEST_CHAR_LIMITS.
 """
 
 from collections.abc import Callable
+from pathlib import Path
 
 from mlagent.settings import DIGEST_CHAR_LIMITS, MAX_ERROR_TEXT_CHARS
-from mlagent.state import ExperimentRun, Ledger
+from mlagent.state import ExperimentRun, Ledger, ProjectBrief
 
 BEST_RUNS_SHOWN = 5
 LATEST_RUNS_SHOWN = 10
@@ -306,3 +307,45 @@ def build_progress_text(ledger: Ledger) -> str:
     if last_review:
         lines += ["", "## Latest review", f"Focus {last_review.focus}: {last_review.reason}"]
     return "\n".join(lines) + "\n"
+
+
+def describe_dataset_columns(project_folder: Path, brief: ProjectBrief | None = None) -> str:
+    """List the column names of tabular data files in the project folder."""
+    import pandas as pd
+
+    candidate_files: list[Path] = []
+    if brief and brief.files:
+        for f in brief.files:
+            file_path = project_folder / f.path
+            if file_path.is_file() and f.kind == "table":
+                candidate_files.append(file_path)
+
+    # Search directly in project_folder for csv/parquet/tsv if none found
+    if not candidate_files:
+        for ext in ("*.csv", "*.parquet", "*.tsv"):
+            for p in sorted(project_folder.glob(ext)):
+                name_lower = p.name.lower()
+                if not name_lower.startswith(".") and "mlagent" not in name_lower:
+                    candidate_files.append(p)
+
+    if not candidate_files:
+        return ""
+
+    lines = ["DATASET COLUMNS:"]
+    for file_path in candidate_files[:6]:
+        try:
+            rel_name = file_path.relative_to(project_folder).as_posix()
+        except ValueError:
+            rel_name = file_path.name
+        try:
+            if file_path.suffix.lower() == ".parquet":
+                cols = pd.read_parquet(file_path).columns.tolist()
+            else:
+                cols = pd.read_csv(file_path, nrows=0).columns.tolist()
+            lines.append(f"- {rel_name}: {cols} (total {len(cols)} columns)")
+        except Exception:
+            continue
+
+    if len(lines) == 1:
+        return ""
+    return "\n".join(lines)

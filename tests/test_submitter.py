@@ -278,7 +278,7 @@ def test_the_report_prompt_carries_the_facts_and_the_no_invention_rule(
     assert "Task (the user's words): Predict churn." in report_prompt
     assert "Best approved run: experiment_001, lightgbm" in report_prompt
     assert "Stop reason: budget" in report_prompt
-    assert "Never invent a number" in report_prompt
+    assert "Never invent, estimate or recompute a number" in report_prompt
     assert "Time limit for one script run: 30 minutes" in report_prompt
 
 
