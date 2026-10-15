@@ -63,16 +63,6 @@ def extract_json_text(response_text: str) -> str:
     return candidate_text.strip()
 
 
-def build_repair_prompt(original_prompt: str, previous_answer: str, problem: str) -> str:
-    return (
-        f"{original_prompt}\n\n"
-        "Your previous answer could not be used.\n"
-        f"Previous answer:\n{previous_answer[:REPAIR_TEXT_CHARS]}\n\n"
-        f"Problem:\n{problem[:REPAIR_TEXT_CHARS]}\n\n"
-        "Answer again with only the corrected JSON."
-    )
-
-
 class LlmClient:
     def __init__(
         self, model_config: ModelConfig, workspace: Workspace, event_bus: EventBus
@@ -80,12 +70,13 @@ class LlmClient:
         self.model_config = model_config
         self.workspace = workspace
         self.event_bus = event_bus
+        timeout = getattr(model_config, "request_timeout_seconds", LLM_CALL_TIMEOUT_SECONDS)
         self.chat_model = ChatOllama(
             model=model_config.name,
             base_url=model_config.base_url,
             temperature=model_config.temperature,
             num_ctx=model_config.context_length,
-            client_kwargs={"timeout": LLM_CALL_TIMEOUT_SECONDS},
+            client_kwargs={"timeout": timeout},
         )
 
     def check_ready(self) -> None:
@@ -139,7 +130,8 @@ class LlmClient:
         base_prompt = prompt + schema_note
         current_prompt = base_prompt
         problem = ""
-        total_tries = LLM_REPAIR_RETRIES + 1
+        retries = getattr(self.model_config, "retries", LLM_REPAIR_RETRIES)
+        total_tries = retries + 1
         for _ in range(total_tries):
             response_text = self._ask(
                 agent_name, current_prompt, json_schema, system_message=system_message
@@ -148,7 +140,13 @@ class LlmClient:
                 return answer_model.model_validate_json(extract_json_text(response_text))
             except ValidationError as validation_error:
                 problem = str(validation_error)
-                current_prompt = build_repair_prompt(base_prompt, response_text, problem)
+                current_prompt = (
+                    f"{base_prompt}\n\n"
+                    "Your previous answer could not be used.\n"
+                    f"Previous answer:\n{response_text[:REPAIR_TEXT_CHARS]}\n\n"
+                    f"Problem:\n{problem[:REPAIR_TEXT_CHARS]}\n\n"
+                    "Answer again with only the corrected JSON."
+                )
                 self.event_bus.emit(
                     EventType.WARNING, agent_name, "the model's JSON was not valid, asking again"
                 )

@@ -217,7 +217,9 @@ def run_coder(
     outcome = build_failure("The Coder did not run.")
     digest = build_digest(AGENT_KEY, ledger)
 
-    while attempts_used < MAX_CODE_ATTEMPTS:
+    max_code_attempts = agent_context.config.limits.max_code_attempts
+
+    while attempts_used < max_code_attempts:
         prompt = CODER_PROMPT.format(
             random_seed=RANDOM_SEED,
             shell_name=agent_context.environment.shell_name,
@@ -230,7 +232,7 @@ def run_coder(
             caller_name=caller_name,
             task_text=task_text,
             attempt_number=attempts_used + 1,
-            max_code_attempts=MAX_CODE_ATTEMPTS,
+            max_code_attempts=max_code_attempts,
             history_text="\n\n".join(history_entries) or "First attempt.",
         )
 

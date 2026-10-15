@@ -177,7 +177,15 @@ class CodeRunner:
                 ),
             )
         except OSError as error:
-            result = self._build_result(command_text, -1, "", str(error), False, started_at)
+            result = CommandResult(
+                command_text=command_text,
+                exit_code=-1,
+                stdout="",
+                stderr=str(error),
+                timed_out=False,
+                seconds=round(time.monotonic() - started_at, 1),
+                timeout_seconds=self.timeout_seconds,
+            )
             self._write_log(kind, working_folder, result)
             return result
 
@@ -193,30 +201,17 @@ class CodeRunner:
             except subprocess.TimeoutExpired:
                 stdout_text, stderr_text = "", ""
 
-        result = self._build_result(
-            command_text, process.returncode, stdout_text, stderr_text, timed_out, started_at
-        )
-        self._write_log(kind, working_folder, result)
-        return result
-
-    def _build_result(
-        self,
-        command_text: str,
-        exit_code: int,
-        stdout_text: str,
-        stderr_text: str,
-        timed_out: bool,
-        started_at: float,
-    ) -> CommandResult:
-        return CommandResult(
+        result = CommandResult(
             command_text=command_text,
-            exit_code=exit_code,
+            exit_code=process.returncode,
             stdout=keep_end_of_text(stdout_text, MAX_COMMAND_OUTPUT_CHARS),
             stderr=keep_end_of_text(stderr_text, MAX_COMMAND_OUTPUT_CHARS),
             timed_out=timed_out,
             seconds=round(time.monotonic() - started_at, 1),
             timeout_seconds=self.timeout_seconds,
         )
+        self._write_log(kind, working_folder, result)
+        return result
 
     def _write_log(self, kind: str, working_folder: Path, result: CommandResult) -> None:
         append_json_line(

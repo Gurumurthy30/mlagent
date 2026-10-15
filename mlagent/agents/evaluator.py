@@ -7,7 +7,7 @@ Code rules catch hard failures immediately. Otherwise the LLM assesses findings.
 from __future__ import annotations
 
 import json
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
@@ -95,15 +95,21 @@ def hard_check_reasons(
     checks: EvaluationChecks,
     higher_is_better: bool,
     best_approved_run: ExperimentRun | None = None,
+    config: Any = None,
 ) -> list[str]:
     """Rules that reject a run without calling the LLM."""
     reasons: list[str] = []
     mean_score = run.score_mean
     std_score = run.score_std or 0.0
 
+    score_tol = getattr(config, "score_tolerance_relative", SCORE_TOLERANCE_RELATIVE) if config else SCORE_TOLERANCE_RELATIVE
+    gap_std_mult = getattr(config, "holdout_gap_std_multiplier", HOLDOUT_GAP_STD_MULTIPLIER) if config else HOLDOUT_GAP_STD_MULTIPLIER
+    gap_rel_lim = getattr(config, "holdout_gap_relative_limit", HOLDOUT_GAP_RELATIVE_LIMIT) if config else HOLDOUT_GAP_RELATIVE_LIMIT
+    jump_std_mult = getattr(config, "large_score_jump_std_multiplier", LARGE_SCORE_JUMP_STD_MULTIPLIER) if config else LARGE_SCORE_JUMP_STD_MULTIPLIER
+
     # 1. Score mismatch
     if checks.recomputed_score is not None and mean_score is not None:
-        tolerance = max(std_score, SCORE_TOLERANCE_RELATIVE * abs(mean_score), 1e-9)
+        tolerance = max(std_score, score_tol * abs(mean_score), 1e-9)
         if abs(checks.recomputed_score - mean_score) > tolerance:
             reasons.append(
                 f"Recomputed score {checks.recomputed_score:.4f} differs from logged "
@@ -114,7 +120,7 @@ def hard_check_reasons(
     holdout_score = checks.recomputed_holdout_score if checks.recomputed_holdout_score is not None else run.holdout_score
     if holdout_score is not None and mean_score is not None:
         shortfall = (mean_score - holdout_score) if higher_is_better else (holdout_score - mean_score)
-        allowed_gap = max(HOLDOUT_GAP_STD_MULTIPLIER * std_score, HOLDOUT_GAP_RELATIVE_LIMIT * abs(mean_score))
+        allowed_gap = max(gap_std_mult * std_score, gap_rel_lim * abs(mean_score))
         if shortfall > allowed_gap:
             reasons.append(
                 f"Holdout score {holdout_score:.4f} is significantly worse than validation "
@@ -139,9 +145,9 @@ def hard_check_reasons(
     # 5. Large jump with leakage flag
     if best_approved_run and best_approved_run.score_mean is not None and mean_score is not None:
         jump = (mean_score - best_approved_run.score_mean) if higher_is_better else (best_approved_run.score_mean - mean_score)
-        if jump > LARGE_SCORE_JUMP_STD_MULTIPLIER * max(std_score, 1e-6) and checks.leakage_flags:
+        if jump > jump_std_mult * max(std_score, 1e-6) and checks.leakage_flags:
             reasons.append(
-                f"Score jump ({jump:+.4f}) is abnormally large (> {LARGE_SCORE_JUMP_STD_MULTIPLIER}x std) while leakage flags are present."
+                f"Score jump ({jump:+.4f}) is abnormally large (> {jump_std_mult}x std) while leakage flags are present."
             )
 
     return reasons
@@ -210,7 +216,8 @@ def run_evaluator(
         run.checks = {"unverified": True}
     else:
         run.checks = checks.model_dump()
-        hard_reasons = hard_check_reasons(run, checks, higher_is_better, best_prior)
+        eval_cfg = getattr(agent_context.config, "evaluation", None)
+        hard_reasons = hard_check_reasons(run, checks, higher_is_better, best_prior, config=eval_cfg)
         if hard_reasons:
             run.verdict = "reject"
             run.verdict_reasons = hard_reasons

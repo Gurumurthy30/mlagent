@@ -8,7 +8,6 @@ code evaluates with is_counted_gain and adds winning features to features_vN.py.
 from __future__ import annotations
 
 import ast
-import json
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -50,14 +49,14 @@ YOU MAY:
 OUTPUT:
 Return JSON:
 - thinking: 2-3 sentences describing the preparation strategy.
-- steps: list of objects {"name": str, "what_to_do": str, "why": str}."""
+- steps: list of objects {{"name": str, "what_to_do": str, "why": str}}."""
 
 PROPOSE_PROMPT = """\
 You are the Feature Engineer of an ML team. You propose candidate feature ideas to improve validation score.
 You do not write Python code; candidate specs are screened by a fast proxy script.
 
 GOAL:
-Propose candidate feature specs that target weaknesses from recent rounds and EDA findings.
+Propose up to {max_candidates} candidate feature specs that target weaknesses from recent rounds and EDA findings.
 
 SITUATION:
 {digest}
@@ -77,7 +76,7 @@ YOU MAY:
 OUTPUT:
 Return JSON:
 - thinking: 2-3 sentences explaining your reasoning.
-- candidates: list of objects {"name": str, "family": str, "reason": str, "finding_id": str, "idea": str}."""
+- candidates: list of up to {max_candidates} objects {{"name": str, "family": str, "reason": str, "finding_id": str, "idea": str}}."""
 
 
 class FoundationStep(BaseModel):
@@ -104,18 +103,6 @@ class CandidateList(BaseModel):
     candidates: list[CandidateSpec] = []
 
 
-class ScreenResultCandidate(BaseModel):
-    name: str
-    scores: list[float] | None = None
-    seconds: float = 0.0
-    error: str = ""
-
-
-class ScreenResult(BaseModel):
-    baseline_scores: list[float] = []
-    candidates: list[ScreenResultCandidate] = []
-
-
 def inspect_features_file(path: Path) -> str:
     """Extract top-level function names and docstrings from a features module."""
     if not path.is_file():
@@ -140,7 +127,7 @@ def build_foundation(ledger: Ledger, agent_context: AgentContext) -> dict:
     event_bus = agent_context.event_bus
     event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, "creating foundation features_v1.py")
 
-    digest = build_digest(AGENT_KEY, ledger)
+    digest = build_digest(AGENT_KEY, ledger, char_limit=agent_context.config.context.feature_engineer)
     prompt = FOUNDATION_PROMPT.format(digest=digest)
     draft = agent_context.llm_client.ask_structured(AGENT_NAME, prompt, FoundationDraft)
 
@@ -166,7 +153,7 @@ def build_foundation(ledger: Ledger, agent_context: AgentContext) -> dict:
         f'<{FOUNDATION_RESULT_TAG}>{{"status": "ok"}}</{FOUNDATION_RESULT_TAG}>'
     )
 
-    coder_res = run_coder(
+    _ = run_coder(
         task_text=coder_task,
         result_tag=FOUNDATION_RESULT_TAG,
         result_keys_text='- "status": "ok"',
@@ -215,9 +202,11 @@ def run_feature_engineer(ledger: Ledger, agent_context: AgentContext) -> dict:
     workspace = agent_context.workspace
     current_features_path = workspace.features_file(ledger.current_feature_version)
     existing_funcs = inspect_features_file(current_features_path)
-    digest = build_digest(AGENT_KEY, ledger)
-
-    propose_prompt = PROPOSE_PROMPT.format(digest=digest, existing_features=existing_funcs)
+    max_candidates = agent_context.config.limits.candidates_per_feature_round
+    digest = build_digest(AGENT_KEY, ledger, char_limit=agent_context.config.context.feature_engineer)
+    propose_prompt = PROPOSE_PROMPT.format(
+        digest=digest, existing_features=existing_funcs, max_candidates=max_candidates
+    )
     proposal = agent_context.llm_client.ask_structured(AGENT_NAME, propose_prompt, CandidateList)
 
     candidates = proposal.candidates
@@ -265,27 +254,27 @@ def run_feature_engineer(ledger: Ledger, agent_context: AgentContext) -> dict:
         agent_context=agent_context,
     )
 
-    screen_data: ScreenResult | None = None
-    if coder_res.succeeded and isinstance(coder_res.result_data, dict):
-        try:
-            screen_data = ScreenResult.model_validate(coder_res.result_data)
-        except Exception:
-            screen_data = None
+    screen_data: dict = coder_res.result_data if (coder_res.succeeded and isinstance(coder_res.result_data, dict)) else {}
+    base_scores = screen_data.get("baseline_scores") or []
 
     higher_is_better = ledger.brief.higher_is_better
     winners: list[tuple[CandidateSpec, float]] = []
     losers: list[tuple[CandidateSpec, float | None]] = []
 
     spec_by_name = {c.name: c for c in candidates}
-    if screen_data and all_finite(screen_data.baseline_scores):
-        base_scores = screen_data.baseline_scores
-        for c_res in screen_data.candidates:
-            spec = spec_by_name.get(c_res.name)
+    if all_finite(base_scores):
+        raw_candidates = screen_data.get("candidates") or []
+        for c_res in raw_candidates:
+            if not isinstance(c_res, dict):
+                continue
+            c_name = c_res.get("name", "")
+            spec = spec_by_name.get(c_name)
             if not spec:
                 continue
-            if c_res.scores and all_finite(c_res.scores):
-                gain = score_improvement(c_res.scores, base_scores, higher_is_better)
-                counted = is_counted_gain(c_res.scores, base_scores, higher_is_better)
+            c_scores = c_res.get("scores") or []
+            if all_finite(c_scores):
+                gain = score_improvement(c_scores, base_scores, higher_is_better)
+                counted = is_counted_gain(c_scores, base_scores, higher_is_better)
                 if counted and gain > 0:
                     winners.append((spec, gain))
                 else:

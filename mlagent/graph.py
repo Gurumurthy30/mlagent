@@ -18,7 +18,6 @@ from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
 
 from mlagent.agents.base import AgentContext, AgentFailedError
-from mlagent.agents.coder import run_coder
 from mlagent.agents.data_analyst import run_data_analyst
 from mlagent.agents.data_engineer import run_data_engineer
 from mlagent.agents.evaluator import run_evaluator
@@ -117,6 +116,15 @@ def route_after_tune(ledger: Ledger) -> str:
     return "review"
 
 
+def route_after_data_analyst(ledger: Ledger, max_eda_loops: int = 4) -> str:
+    """Route after an EDA round: loop back, proceed to ml_lead, or to features on revisit."""
+    if not ledger.eda.done and ledger.eda.eda_loops_used < max_eda_loops:
+        return "data_analyst"
+    if ledger.phase == "data_analyst":
+        return "ml_lead"
+    return "feature_engineer"
+
+
 def build_failure_updates(
     ledger: Ledger, node_name: str, stop_reason: StopReason, message: str
 ) -> dict:
@@ -206,18 +214,10 @@ def build_fallback_report(ledger: Ledger, agent_context: AgentContext) -> tuple[
 
 
 def build_nodes(agent_context: AgentContext) -> dict[str, NodeFunction]:
-    max_experiment_loops = agent_context.config.limits.max_experiment_loops
-    max_eda_loops = agent_context.config.limits.max_eda_loops
+    limits = agent_context.config.limits
     event_bus = agent_context.event_bus
 
-    def data_engineer_node(ledger: Ledger) -> dict:
-        return {"brief": run_data_engineer(ledger, agent_context), "phase": "data_analyst"}
-
-    def data_analyst_node(ledger: Ledger) -> dict:
-        eda = run_data_analyst(ledger, agent_context)
-        return {"eda": eda}
-
-    def ml_lead_node(ledger: Ledger) -> dict:
+    def run_ml_lead_node(ledger: Ledger) -> dict:
         plan = run_ml_lead(ledger, agent_context)
         baseline_short = (
             plan.baseline_description[:50] + "..."
@@ -232,30 +232,19 @@ def build_nodes(agent_context: AgentContext) -> dict[str, NodeFunction]:
         )
         return {"plan": plan, "phase": "experiment_loop"}
 
-    def stop_check_node(ledger: Ledger) -> dict:
-        stop_reason = decide_stop_reason(ledger, max_experiment_loops)
+    def run_stop_check_node(ledger: Ledger) -> dict:
+        stop_reason = decide_stop_reason(ledger, limits)
         if stop_reason is not None:
             event_bus.emit(EventType.DECISION, "Controller", f"stopping the loop: {stop_reason}")
             return {"stop_reason": stop_reason, "phase": "submit"}
         event_bus.emit(
             EventType.INFO,
             "Controller",
-            f"round {ledger.iteration + 1} of {max_experiment_loops}, focus {ledger.focus}",
+            f"round {ledger.iteration + 1} of {limits.max_experiment_loops}, focus {ledger.focus}",
         )
         return {}
 
-    def features_node(ledger: Ledger) -> dict:
-        result = run_feature_engineer(ledger, agent_context)
-        return result
-
-    def model_node(ledger: Ledger) -> dict:
-        return {"runs": [*ledger.runs, run_modeler(ledger, agent_context)]}
-
-    def tune_node(ledger: Ledger) -> dict:
-        tuned_runs = run_tuner(ledger, agent_context)
-        return {"runs": [*ledger.runs, *tuned_runs], "last_tuned_iteration": ledger.iteration}
-
-    def evaluate_node(ledger: Ledger) -> dict:
+    def run_evaluate_node(ledger: Ledger) -> dict:
         best_run_before = ledger.best_approved_run()
         working_runs = list(ledger.runs)
 
@@ -292,7 +281,7 @@ def build_nodes(agent_context: AgentContext) -> dict[str, NodeFunction]:
 
         return {"runs": working_runs}
 
-    def review_node(ledger: Ledger) -> dict:
+    def run_review_node(ledger: Ledger) -> dict:
         review = run_reviewer(ledger, agent_context)
         updates: dict = {
             "reviews": [*ledger.reviews, review],
@@ -314,11 +303,7 @@ def build_nodes(agent_context: AgentContext) -> dict[str, NodeFunction]:
 
         return updates
 
-    def submit_node(ledger: Ledger) -> dict:
-        final = run_submitter(ledger, agent_context)
-        return {"final": final, "phase": "report"}
-
-    def report_node(ledger: Ledger) -> dict:
+    def run_report_node(ledger: Ledger) -> dict:
         try:
             report_text, headline = run_report(ledger, agent_context)
         except Exception as err:
@@ -343,21 +328,21 @@ def build_nodes(agent_context: AgentContext) -> dict[str, NodeFunction]:
         )
         return {"final": final, "status": "done", "phase": "done"}
 
-    node_functions = {
-        "data_engineer": data_engineer_node,
-        "data_analyst": data_analyst_node,
-        "ml_lead": ml_lead_node,
-        "stop_check": stop_check_node,
-        "feature_engineer": features_node,
-        "model": model_node,
-        "tune": tune_node,
-        "evaluate": evaluate_node,
-        "review": review_node,
-        "submit": submit_node,
-        "report": report_node,
+    node_actions = {
+        "data_engineer": lambda ledger: {"brief": run_data_engineer(ledger, agent_context), "phase": "data_analyst"},
+        "data_analyst": lambda ledger: {"eda": run_data_analyst(ledger, agent_context)},
+        "ml_lead": run_ml_lead_node,
+        "stop_check": run_stop_check_node,
+        "feature_engineer": lambda ledger: run_feature_engineer(ledger, agent_context),
+        "model": lambda ledger: {"runs": [*ledger.runs, run_modeler(ledger, agent_context)]},
+        "tune": lambda ledger: {"runs": [*ledger.runs, *run_tuner(ledger, agent_context)], "last_tuned_iteration": ledger.iteration},
+        "evaluate": run_evaluate_node,
+        "review": run_review_node,
+        "submit": lambda ledger: {"final": run_submitter(ledger, agent_context), "phase": "report"},
+        "report": run_report_node,
     }
     return {
-        name: make_node(name, function, agent_context) for name, function in node_functions.items()
+        name: make_node(name, fn, agent_context) for name, fn in node_actions.items()
     }
 
 
@@ -368,13 +353,6 @@ def targets_with_exits(*node_names: str) -> dict[str, str]:
 
 def build_pipeline(agent_context: AgentContext):
     max_eda_loops = agent_context.config.limits.max_eda_loops
-
-    def route_after_data_analyst(ledger: Ledger) -> str:
-        if not ledger.eda.done and ledger.eda.eda_loops_used < max_eda_loops:
-            return "data_analyst"
-        if ledger.phase == "data_analyst":
-            return "ml_lead"
-        return "feature_engineer"
 
     graph = StateGraph(Ledger)
     for node_name, node_function in build_nodes(agent_context).items():
@@ -409,7 +387,7 @@ def build_pipeline(agent_context: AgentContext):
     # Conditional routes
     graph.add_conditional_edges(
         "data_analyst",
-        stop_when_over(route_after_data_analyst),
+        stop_when_over(lambda ledger: route_after_data_analyst(ledger, max_eda_loops)),
         targets_with_exits("data_analyst", "ml_lead", "feature_engineer"),
     )
 

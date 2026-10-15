@@ -22,12 +22,6 @@ def find_sample_submission(brief: ProjectBrief, project_folder: Path) -> Path | 
     return None
 
 
-def check_folder(predictions_path: Path) -> list[str]:
-    if not any(predictions_path.iterdir()):
-        return [f"The predictions folder {predictions_path} is empty."]
-    return []
-
-
 def compare_with_sample(predictions: pd.DataFrame, sample: pd.DataFrame) -> list[str]:
     problems = []
     if list(predictions.columns) != list(sample.columns):
@@ -87,7 +81,9 @@ def check_predictions_file(
     if not predictions_path.exists():
         return [f"The predictions file {predictions_path} does not exist."]
     if predictions_path.is_dir():
-        return check_folder(predictions_path)
+        if not any(predictions_path.iterdir()):
+            return [f"The predictions folder {predictions_path} is empty."]
+        return []
     if predictions_path.stat().st_size == 0:
         return ["The predictions file is empty."]
     if predictions_path.suffix.lower() == ".csv":

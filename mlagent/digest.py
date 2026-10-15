@@ -237,19 +237,14 @@ def build_history_items(ledger: Ledger) -> list[str]:
     return items
 
 
-def build_budget_line_item(ledger: Ledger) -> list[str]:
-    return [
+def build_digest(agent_name: str, ledger: Ledger, char_limit: int | None = None) -> str:
+    """Build the prompt digest for a specific agent."""
+    limit = char_limit if char_limit is not None else DIGEST_CHAR_LIMITS.get(agent_name, 6000)
+
+    budget_items = [
         f"BUDGET: Round {ledger.iteration} | script time limit 20 min | EDA rounds {ledger.eda.eda_loops_used}"
     ]
-
-
-def build_machine_items(ledger: Ledger) -> list[str]:
-    return [f"COMPUTE: use_gpu={ledger.plan.use_gpu}"]
-
-
-def build_digest(agent_name: str, ledger: Ledger) -> str:
-    """Build the prompt digest for a specific agent."""
-    limit = DIGEST_CHAR_LIMITS.get(agent_name, 6000)
+    machine_items = [f"COMPUTE: use_gpu={ledger.plan.use_gpu}"]
 
     if agent_name == "reviewer":
         # Targeted reviewer digest per section 4
@@ -259,7 +254,7 @@ def build_digest(agent_name: str, ledger: Ledger) -> str:
             ("FEATURES", build_features_items(ledger)),
             ("RUNS", build_runs_items(ledger)),
             ("HISTORY", build_history_items(ledger)),
-            ("BUDGET", build_budget_line_item(ledger)),
+            ("BUDGET", budget_items),
         ]
     elif agent_name == "data_engineer":
         sections = [("TASK", [f"USER TASK: {ledger.user_task}", f"USER METRICS: {ledger.user_metrics_text or 'not given'}"])]
@@ -267,14 +262,14 @@ def build_digest(agent_name: str, ledger: Ledger) -> str:
         sections = [
             ("PROJECT BRIEF", build_task_brief_items(ledger)),
             ("EDA FINDINGS", build_eda_items(ledger)),
-            ("BUDGET", build_budget_line_item(ledger)),
+            ("BUDGET", budget_items),
         ]
     elif agent_name == "ml_lead":
         sections = [
             ("PROJECT BRIEF", build_task_brief_items(ledger)),
             ("EDA FINDINGS", build_eda_items(ledger)),
-            ("BUDGET", build_budget_line_item(ledger)),
-            ("MACHINE", build_machine_items(ledger)),
+            ("BUDGET", budget_items),
+            ("MACHINE", machine_items),
         ]
     elif agent_name == "feature_engineer":
         sections = [
@@ -284,7 +279,7 @@ def build_digest(agent_name: str, ledger: Ledger) -> str:
             ("FEATURES", build_features_items(ledger)),
             ("EDA FINDINGS", build_eda_items(ledger)),
             ("RUNS", build_runs_items(ledger)),
-            ("BUDGET", build_budget_line_item(ledger)),
+            ("BUDGET", budget_items),
         ]
     elif agent_name == "modeler":
         sections = [
@@ -294,8 +289,8 @@ def build_digest(agent_name: str, ledger: Ledger) -> str:
             ("RUNS", build_runs_items(ledger)),
             ("FEATURES", build_features_items(ledger)),
             ("EDA HINTS", build_eda_items(ledger)),
-            ("BUDGET", build_budget_line_item(ledger)),
-            ("MACHINE", build_machine_items(ledger)),
+            ("BUDGET", budget_items),
+            ("MACHINE", machine_items),
         ]
     elif agent_name == "evaluator":
         sections = [
@@ -304,35 +299,35 @@ def build_digest(agent_name: str, ledger: Ledger) -> str:
             ("RUNS", build_runs_items(ledger)),
             ("EDA LEAKAGE RISKS", [f"- {r}" for r in ledger.eda.leakage_risks]),
             ("HISTORY", build_history_items(ledger)),
-            ("BUDGET", build_budget_line_item(ledger)),
+            ("BUDGET", budget_items),
         ]
     elif agent_name == "tuner":
         sections = [
             ("PLAN", build_plan_items(ledger)),
             ("RUNS", build_runs_items(ledger)),
             ("HISTORY", build_history_items(ledger)),
-            ("BUDGET", build_budget_line_item(ledger)),
-            ("MACHINE", build_machine_items(ledger)),
+            ("BUDGET", budget_items),
+            ("MACHINE", machine_items),
         ]
     elif agent_name == "submitter":
         sections = [
             ("TASK & BRIEF", build_task_brief_items(ledger)),
             ("PLAN", build_plan_items(ledger)),
             ("RUNS", build_runs_items(ledger)),
-            ("BUDGET", build_budget_line_item(ledger)),
+            ("BUDGET", budget_items),
         ]
     else:  # coder or general
         sections = [
             ("PLAN", build_plan_items(ledger)),
             ("RUNS", build_runs_items(ledger)),
-            ("BUDGET", build_budget_line_item(ledger)),
-            ("MACHINE", build_machine_items(ledger)),
+            ("BUDGET", budget_items),
+            ("MACHINE", machine_items),
         ]
 
     return assemble_sections(sections, limit)
 
 
-def build_report_facts(ledger: Ledger) -> str:
+def build_report_facts(ledger: Ledger, char_limit: int | None = None) -> str:
     """Build the comprehensive facts document for the final report (~14,000 chars).
 
     Priority order:
@@ -346,7 +341,7 @@ def build_report_facts(ledger: Ledger) -> str:
     8. medium findings
     9. runs table
     """
-    total_budget = 14000
+    total_budget = char_limit if char_limit is not None else 14000
     best_run = ledger.best_approved_run()
 
     # 1. Final result and best run

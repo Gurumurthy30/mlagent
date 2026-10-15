@@ -10,7 +10,12 @@ from pathlib import Path
 from mlagent import __version__
 from mlagent.agents.base import AgentContext
 from mlagent.code_runner import CodeRunner
-from mlagent.config import ConfigError, load_or_create_config
+from mlagent.config import (
+    ConfigError,
+    DEFAULT_CONFIG_TEXT,
+    get_effective_config_details,
+    load_or_create_config,
+)
 from mlagent.console_ui import ConsoleUI
 from mlagent.environment_probe import (
     EnvironmentInfo,
@@ -118,23 +123,74 @@ def load_or_start_ledger(ui: ConsoleUI, workspace: Workspace, resuming: bool) ->
     return ledger
 
 
+
+def init_config_command(output: str | None, force: bool, ui: ConsoleUI) -> int:
+    target_path = Path(output) if output else Path("config.yaml")
+    if target_path.exists() and not force:
+        ui.show_message(
+            f"Config file {target_path} already exists. Use --force to overwrite.",
+            style="bold red",
+        )
+        return EXIT_USAGE
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(DEFAULT_CONFIG_TEXT, encoding="utf-8")
+    ui.show_message(f"Created default configuration at {target_path}", style="bold green")
+    return EXIT_OK
+
+
+def config_command(config_path_str: str | None, overrides: list[str], ui: ConsoleUI) -> int:
+    cfg_path = (
+        Path(config_path_str)
+        if config_path_str
+        else (
+            Path("mlagent_workspace/config.yaml")
+            if Path("mlagent_workspace/config.yaml").exists()
+            else Path("config.yaml")
+        )
+    )
+    try:
+        details = get_effective_config_details(cfg_path if cfg_path.exists() else None, overrides)
+    except ConfigError as error:
+        ui.show_message(str(error), style="bold red")
+        return EXIT_USAGE
+
+    from rich.table import Table
+
+    table = Table(title="mlagent Effective Configuration")
+    table.add_column("Section", style="cyan")
+    table.add_column("Key", style="bold")
+    table.add_column("Value", style="green")
+    table.add_column("Tier", style="dim")
+    table.add_column("Source", style="yellow")
+    for item in details:
+        val_str = str(item["value"])
+        if len(val_str) > 40:
+            val_str = val_str[:37] + "..."
+        table.add_row(item["section"], item["key"], val_str, item["tier"], item["source"])
+    ui.console.print(table)
+    return EXIT_OK
+
+
 def start_command(
     project_folder: Path,
     ui: ConsoleUI,
     create_llm_client: LlmClientFactory = LlmClient,
     probe: Callable[[], EnvironmentInfo] = probe_environment,
+    config_path: Path | None = None,
+    overrides: list[str] | None = None,
 ) -> int:
     workspace = Workspace(project_folder)
     resuming = prepare_workspace(ui, workspace)
 
-    config_is_new = not workspace.config_path.exists()
+    cfg_file = config_path if config_path is not None else workspace.config_path
+    config_is_new = not cfg_file.exists()
     try:
-        config = load_or_create_config(workspace.config_path)
+        config = load_or_create_config(cfg_file, overrides=overrides)
     except ConfigError as error:
         ui.show_message(str(error), style="bold red")
         return EXIT_USAGE
     if config_is_new:
-        ui.show_message(f"Created {workspace.config_path}. Edit it to change the model or limits.")
+        ui.show_message(f"Created {cfg_file}. Edit it to change the model or limits.")
 
     event_bus = EventBus()
     event_bus.subscribe(ui.handle_event)
@@ -145,7 +201,7 @@ def start_command(
     save_environment(environment, workspace.environment_path)
     ui.show_message(environment_to_text(environment))
 
-    llm_client = create_llm_client(config.model, workspace, event_bus)
+    llm_client = create_llm_client(config.llm, workspace, event_bus)
     try:
         llm_client.check_ready()
     except LlmUnavailableError as error:
@@ -201,10 +257,48 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--version", action="version", version=f"mlagent {__version__}")
     subparsers = parser.add_subparsers(dest="command")
-    subparsers.add_parser("start", help="Run the agents on the ML project in this folder.")
+
+    start_parser = subparsers.add_parser("start", help="Run the agents on the ML project in this folder.")
+    start_parser.add_argument("--config", type=str, default=None, help="Path to config.yaml file")
+    start_parser.add_argument(
+        "--set",
+        dest="overrides",
+        action="append",
+        default=[],
+        help="Override a config setting, e.g. --set limits.max_eda_loops=6",
+    )
+    start_parser.add_argument("folder", nargs="?", default=".", help="Project folder path")
+
+    init_parser = subparsers.add_parser("init-config", help="Write a default config.yaml with documentation.")
+    init_parser.add_argument("--output", type=str, default=None, help="Output config path (default: config.yaml)")
+    init_parser.add_argument("--force", action="store_true", help="Overwrite existing config file if present")
+
+    cfg_parser = subparsers.add_parser("config", help="Display effective configuration and sources.")
+    cfg_parser.add_argument("--config", type=str, default=None, help="Path to config.yaml file")
+    cfg_parser.add_argument(
+        "--set",
+        dest="overrides",
+        action="append",
+        default=[],
+        help="Override a config setting, e.g. --set limits.max_eda_loops=6",
+    )
+
     arguments = parser.parse_args(argv)
 
+    ui = ConsoleUI()
     if arguments.command == "start":
-        return start_command(Path.cwd(), ConsoleUI())
+        cfg_path = Path(arguments.config) if arguments.config else None
+        target_folder = Path(arguments.folder).resolve()
+        return start_command(
+            target_folder,
+            ui,
+            config_path=cfg_path,
+            overrides=arguments.overrides,
+        )
+    if arguments.command == "init-config":
+        return init_config_command(arguments.output, arguments.force, ui)
+    if arguments.command == "config":
+        return config_command(arguments.config, arguments.overrides, ui)
+
     parser.print_help()
     return EXIT_USAGE

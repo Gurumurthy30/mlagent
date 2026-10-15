@@ -227,18 +227,6 @@ class Ledger(BaseModel):
     def next_experiment_id(self) -> str:
         return f"experiment_{len(self.runs) + 1:03d}"
 
-    def next_feature_id(self) -> str:
-        return f"feature_{len(self.features) + 1:03d}"
-
-    def next_finding_id(self) -> str:
-        return f"finding_{len(self.eda.findings) + 1:03d}"
-
-    def find_run(self, experiment_id: str) -> ExperimentRun | None:
-        for run in self.runs:
-            if run.experiment_id == experiment_id:
-                return run
-        return None
-
     def approved_runs(self) -> list[ExperimentRun]:
         return [run for run in self.runs if run.approved]
 
@@ -255,10 +243,6 @@ class Ledger(BaseModel):
             approved,
             key=lambda run: run.score_mean if run.score_mean is not None else float("inf"),
         )
-
-    def recent_crashes(self, count: int) -> list[ExperimentRun]:
-        crashed_runs = [run for run in self.runs if run.crashed]
-        return crashed_runs[-count:]
 
     def trailing_crashes(self) -> int:
         count = 0

@@ -103,7 +103,7 @@ OUTPUT:
 Return JSON:
 - summary: 2-3 sentences summarizing the key takeaways from EDA.
 - issues: list of data issues.
-- feature_ideas: list of objects {"description": str, "finding_id": str}.
+- feature_ideas: list of objects {{"description": str, "finding_id": str}}.
 - leakage_risks: list of leakage risks.
 - validation_hints: list of validation hints (grouping, time, stratification).
 - model_hints: list of model hints."""

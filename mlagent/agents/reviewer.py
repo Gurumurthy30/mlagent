@@ -77,7 +77,7 @@ REPORT_PROMPT = """\
 You are the Reviewer writing the official Final Technical Report for the machine learning project.
 Write plain Markdown without surrounding JSON or fences.
 Lead with results, use ONLY the facts given, copy numbers exactly, and write "Not recorded." for any missing fact.
-Do not use hype. Keep total length under 900 words.
+Do not use hype. Keep total length under {max_words} words.
 
 Trace every claim about a cause to a finding ID or lesson in the facts; otherwise write "the team's notes suggest".
 
@@ -186,8 +186,10 @@ def run_report(ledger: Ledger, agent_context: AgentContext) -> tuple[str, str]:
     event_bus = agent_context.event_bus
     event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, "writing final report")
 
-    facts = build_report_facts(ledger)
-    prompt = REPORT_PROMPT.format(facts=facts)
+    max_words = agent_context.config.report.max_words
+    facts_budget = agent_context.config.context.report_facts
+    facts = build_report_facts(ledger, char_limit=facts_budget)
+    prompt = REPORT_PROMPT.format(max_words=max_words, facts=facts)
     report_markdown = agent_context.llm_client.ask_text(AGENT_NAME, prompt)
 
     # Extract 'In brief' section for headline

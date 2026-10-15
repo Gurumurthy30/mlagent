@@ -110,8 +110,12 @@ class Workspace:
         return self.features_folder / f"features_v{feature_version}.py"
 
 
+    def is_ignored_folder(self, folder_name: str) -> bool:
+        """True for folders the agents must not explore."""
+        return folder_name in IGNORED_FOLDER_NAMES or folder_name.startswith(ARCHIVED_WORKSPACE_PREFIX)
+
+
 def is_ignored_folder_name(folder_name: str) -> bool:
-    """True for folders the agents must not explore (our own workspace, caches, old archives)."""
     return folder_name in IGNORED_FOLDER_NAMES or folder_name.startswith(ARCHIVED_WORKSPACE_PREFIX)
 
 

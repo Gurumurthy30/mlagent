@@ -114,6 +114,9 @@ After that it runs autonomously. It prints one line per step. When it finishes i
 - **Ctrl+C** stops safely. Run `mlagent start` again and answer `resume`. An interrupted step is resumed cleanly from its beginning.
 - If a workspace already exists, it asks `resume` or `fresh`. A fresh start renames the old workspace to `mlagent_workspace_old_<time>`. Nothing is deleted, and your edited `config.yaml` is carried over.
 - `mlagent --version` displays version information.
+- `mlagent init-config` generates a starter `config.yaml` with basic keys uncommented and advanced keys documented.
+- `mlagent config` prints the effective configuration and source for every key.
+- Override settings from the CLI with `--config <path>` or repeatable `--set section.key=value`.
 
 ## What it creates
 
@@ -128,28 +131,68 @@ mlagent_workspace/
   report/         report.md and the final predictions file
 ```
 
-## Settings
+## Configuration
 
-`config.yaml` is created on the first run:
+`config.yaml` can be created manually, generated with `mlagent init-config`, or automatically created on the first run.
+Configuration is split into two tiers:
+- **BASIC**: ~15 commonly tuned settings (uncommented by default in `config.yaml`).
+- **ADVANCED**: Finely tuned limits, context budgets, and evaluation thresholds (commented with descriptions in `config.yaml`).
 
-```yaml
-model:
-  name: gemma4:31b                  # Ollama model tag. It must be pulled already.
-  base_url: http://localhost:11434
-  temperature: 0.2
-  context_length: 16384             # Ollama num_ctx. Higher needs more memory.
+Precedence is: **CLI flag (`--set`) > Config file (`config.yaml`) > Built-in defaults**.
 
-compute:
-  use_gpu: auto                     # auto = the ML Lead decides per task | always | never
+### Configuration Reference
 
-limits:
-  max_eda_loops: 4                  # most rounds the Data Analyst may run
-  max_experiment_loops: 15          # most rounds of the experiment loop
-  code_timeout_minutes: 30          # time limit for one script run
-```
+| Section | Key | Default | Tier | Description |
+|---|---|---|---|---|
+| `llm` | `name` | `gemma4:31b` | basic | Ollama model name (e.g. gemma4:31b, qwen2.5:32b) |
+| `llm` | `base_url` | `https://ollama.com` | basic | Ollama server host address |
+| `llm` | `temperature` | `0.2` | advanced | Sampling temperature for the LLM |
+| `llm` | `context_length` | `16384` | basic | Ollama context window in tokens (num_ctx) |
+| `llm` | `request_timeout_seconds` | `900` | advanced | HTTP request timeout for LLM calls in seconds |
+| `llm` | `retries` | `2` | advanced | Maximum retries for JSON schema repair attempts |
+| `compute` | `use_gpu` | `auto` | basic | GPU utilization mode: auto (ML Lead decides per task), always, or never |
+| `limits` | `max_experiment_loops` | `15` | basic | Maximum rounds of the experiment loop |
+| `limits` | `max_eda_loops` | `4` | basic | Maximum rounds for Data Analyst during EDA |
+| `limits` | `max_data_engineer_rounds` | `3` | advanced | Maximum rounds for Data Engineer inspection |
+| `limits` | `max_data_reentries` | `2` | advanced | Maximum times EDA can be reopened on Reviewer request |
+| `limits` | `code_timeout_minutes` | `30` | basic | Execution time limit for a single script run in minutes |
+| `limits` | `max_code_attempts` | `4` | basic | Maximum retry attempts for Coder to fix script errors |
+| `limits` | `max_consecutive_crashes` | `3` | advanced | Stop rule threshold for consecutive script crashes |
+| `limits` | `plateau_rounds` | `3` | advanced | Stop rule patience: consecutive rounds with no counted gain |
+| `limits` | `min_relative_gain` | `0.001` | advanced | Minimum relative margin for counted gain when splits are few |
+| `limits` | `tune_trial_count` | `20` | advanced | Number of Optuna tuning trials per tuning round |
+| `limits` | `candidates_per_feature_round` | `5` | advanced | Maximum candidate feature ideas proposed per round |
+| `evaluation` | `score_tolerance_relative` | `0.02` | advanced | Relative mismatch allowed between logged and recomputed validation scores |
+| `evaluation` | `holdout_gap_std_multiplier` | `3.0` | advanced | Multiplier of CV standard deviation allowed for holdout score drop |
+| `evaluation` | `holdout_gap_relative_limit` | `0.05` | advanced | Maximum relative drop allowed on holdout score before flagging |
+| `evaluation` | `large_score_jump_std_multiplier` | `3.0` | advanced | Score jump threshold (std multiplier) that triggers rejection if leakage flag is set |
+| `context` | `data_engineer` | `8500` | advanced | Digest character budget for Data Engineer |
+| `context` | `data_analyst` | `5000` | advanced | Digest character budget for Data Analyst |
+| `context` | `ml_lead` | `4500` | advanced | Digest character budget for ML Lead |
+| `context` | `feature_engineer` | `16000` | advanced | Digest character budget for Feature Engineer |
+| `context` | `modeler` | `7000` | advanced | Digest character budget for Modeler |
+| `context` | `evaluator` | `5500` | advanced | Digest character budget for Evaluator |
+| `context` | `tuner` | `5500` | advanced | Digest character budget for Tuner |
+| `context` | `reviewer` | `5500` | advanced | Digest character budget for Reviewer |
+| `context` | `submitter` | `4000` | advanced | Digest character budget for Submitter |
+| `context` | `coder` | `8000` | advanced | Digest character budget for Coder |
+| `context` | `report_facts` | `14000` | advanced | Context character budget for final report facts |
+| `workspace` | `workspace_folder_name` | `mlagent_workspace` | basic | Folder name inside the project directory used for artifacts and memory |
+| `workspace` | `archived_workspace_prefix` | `mlagent_workspace_old_` | advanced | Prefix for archived previous workspace runs |
+| `workspace` | `big_file_mb` | `200` | advanced | File size in megabytes above which files are flagged as large |
+| `workspace` | `max_files_in_listing` | `40` | advanced | Maximum number of files shown in data engineer directory listing |
+| `workspace` | `ignored_folders` | `['.git', '.venv', 'venv', '__pycache__', 'node_modules']` | advanced | Folder names to skip when scanning the project |
+| `machine` | `low_ram_warning_gb` | `4.0` | advanced | Free system RAM in GB below which a low memory warning is shown |
+| `report` | `max_words` | `900` | basic | Target word count limit for the final Markdown report |
+| `ui` | `mode` | `auto` | basic | Terminal display mode: auto, rich, or plain |
+| `ui` | `theme` | `dark` | basic | Color theme: dark, light, or mono |
+| `ui` | `verbosity` | `normal` | basic | Event logging verbosity: quiet, normal, or detailed |
+| `ui` | `timestamps` | `True` | advanced | Show timestamps on log output lines |
+| `ui` | `show_environment` | `True` | advanced | Display environment probe check table on startup |
+| `ui` | `confirm_before_start` | `True` | advanced | Ask confirmation before starting execution |
+| `ui` | `ascii_only` | `False` | advanced | Use ASCII characters only instead of Unicode symbols |
+| `ui` | `log_width` | `100` | advanced | Terminal output line width limit |
 
-Everything else (code attempts per task, plateau rules, seed) is a named constant in
-`mlagent/settings.py`. Every agent prompt is told the limits that matter to it.
 
 ## The team
 

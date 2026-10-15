@@ -4,6 +4,8 @@ The result is saved as memory/environment.json and written into every prompt as 
 The agent never imports torch itself. The torch check runs in a separate Python process.
 """
 
+from __future__ import annotations
+
 import json
 import platform
 import socket
@@ -94,10 +96,21 @@ def can_connect(host: str, port: int = 443, timeout_seconds: float = 3.0) -> boo
         return False
 
 
-def parse_nvidia_smi_output(output_text: str) -> list[tuple[str, float, float]]:
-    """Turn nvidia-smi csv lines into (gpu name, total GB, free GB) for each GPU."""
+def read_nvidia_gpus() -> list[tuple[str, float, float]]:
+    command = [
+        "nvidia-smi",
+        "--query-gpu=name,memory.total,memory.free",
+        "--format=csv,noheader,nounits",
+    ]
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=15)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    if completed.returncode != 0:
+        return []
+
     gpus = []
-    for line in output_text.strip().splitlines():
+    for line in completed.stdout.strip().splitlines():
         try:
             name, total_mb, free_mb = [part.strip() for part in line.rsplit(",", 2)]
             gpus.append(
@@ -112,39 +125,19 @@ def parse_nvidia_smi_output(output_text: str) -> list[tuple[str, float, float]]:
     return gpus
 
 
-def read_nvidia_gpus() -> list[tuple[str, float, float]]:
-    command = [
-        "nvidia-smi",
-        "--query-gpu=name,memory.total,memory.free",
-        "--format=csv,noheader,nounits",
-    ]
-    try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=15)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return []
-    if completed.returncode != 0:
-        return []
-    return parse_nvidia_smi_output(completed.stdout)
-
-
-def parse_torch_probe_output(output_text: str) -> dict:
-    """Read the last line of the probe output. Returns an empty dict when torch is missing."""
-    lines = output_text.strip().splitlines()
-    if not lines:
-        return {}
-    try:
-        return json.loads(lines[-1])
-    except json.JSONDecodeError:
-        return {}
-
-
 def read_torch_status() -> dict:
     command = [sys.executable, "-c", TORCH_PROBE_CODE]
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=120)
     except subprocess.TimeoutExpired:
         return {}
-    return parse_torch_probe_output(completed.stdout)
+    lines = completed.stdout.strip().splitlines()
+    if not lines:
+        return {}
+    try:
+        return json.loads(lines[-1])
+    except json.JSONDecodeError:
+        return {}
 
 
 def read_package_versions() -> tuple[dict[str, str], list[str]]:
@@ -187,17 +180,26 @@ def probe_environment() -> EnvironmentInfo:
     )
 
 
-def describe_gpu(environment: EnvironmentInfo) -> list[str]:
+def environment_to_text(environment: EnvironmentInfo) -> str:
+    """The short description of this machine that goes into every prompt."""
+    lines = [
+        f"OS: {environment.operating_system} (shell: {environment.shell_name})",
+        f"Python: {environment.python_version}",
+        f"CPU cores: {environment.cpu_count}, RAM: {environment.ram_total_gb} GB total, "
+        f"{environment.ram_free_gb} GB free",
+    ]
+
+    # GPU description inline
     if environment.gpu_name:
-        lines = [
+        lines.append(
             f"GPU: {environment.gpu_name} x{environment.gpu_count}, "
             f"{environment.gpu_memory_total_gb} GB total, {environment.gpu_memory_free_gb} GB free "
             "(the Ollama model also uses this GPU)"
-        ]
+        )
     elif environment.torch_mps_available:
-        lines = ["GPU: Apple Silicon (MPS)"]
+        lines.append("GPU: Apple Silicon (MPS)")
     else:
-        lines = ["GPU: none found"]
+        lines.append("GPU: none found")
 
     if not environment.torch_version:
         lines.append("PyTorch: not installed")
@@ -210,18 +212,7 @@ def describe_gpu(environment: EnvironmentInfo) -> list[str]:
         lines.append(f"PyTorch: {environment.torch_version}, CPU only")
         if environment.gpu_name:
             lines.append("NOTE: a GPU exists but this PyTorch build cannot use it. Plan for CPU.")
-    return lines
 
-
-def environment_to_text(environment: EnvironmentInfo) -> str:
-    """The short description of this machine that goes into every prompt."""
-    lines = [
-        f"OS: {environment.operating_system} (shell: {environment.shell_name})",
-        f"Python: {environment.python_version}",
-        f"CPU cores: {environment.cpu_count}, RAM: {environment.ram_total_gb} GB total, "
-        f"{environment.ram_free_gb} GB free",
-    ]
-    lines.extend(describe_gpu(environment))
     lines.append(
         f"Internet: PyPI {'yes' if environment.can_reach_pypi else 'no'}, "
         f"Hugging Face {'yes' if environment.can_reach_huggingface else 'no'}"
@@ -237,11 +228,3 @@ def environment_to_text(environment: EnvironmentInfo) -> str:
 def save_environment(environment: EnvironmentInfo, file_path: Path) -> None:
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(environment.model_dump_json(indent=2), encoding="utf-8")
-
-
-def load_environment(file_path: Path) -> EnvironmentInfo:
-    return EnvironmentInfo.model_validate_json(file_path.read_text(encoding="utf-8"))
-
-
-if __name__ == "__main__":
-    print(environment_to_text(probe_environment()))
