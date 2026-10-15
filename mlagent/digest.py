@@ -1,295 +1,454 @@
-"""Builds the short text each agent receives from the ledger. Plain code, no LLM involved.
+"""Builds the context text each agent receives from the ledger. Plain code, no LLM involved.
 
-Every agent gets only the sections it needs, most important first, cut to its character limit
-from settings.DIGEST_CHAR_LIMITS.
+Context is assembled from whole items, never cut in the middle.
 """
 
-from collections.abc import Callable
-from pathlib import Path
+from __future__ import annotations
 
-from mlagent.settings import DIGEST_CHAR_LIMITS, MAX_ERROR_TEXT_CHARS
-from mlagent.state import ExperimentRun, Ledger, ProjectBrief
+from typing import TYPE_CHECKING
 
-BEST_RUNS_SHOWN = 5
-LATEST_RUNS_SHOWN = 10
-FINDINGS_SHOWN = 12
-FEATURES_SHOWN = 20
-CRASHES_SHOWN = 3
-REVIEWS_SHOWN = 3
-REJECTIONS_SHOWN = 5
-FILES_SHOWN = 10
-PLAYBOOK_CHARS = 1200
-DESCRIPTION_CHARS = 100
+if TYPE_CHECKING:
+    from mlagent.state import Ledger, FeatureRecord
+
+DIGEST_CHAR_LIMITS: dict[str, int] = {
+    "data_engineer": 8500,
+    "data_analyst": 5000,
+    "ml_lead": 4500,
+    "feature_engineer": 16000,
+    "modeler": 7000,
+    "evaluator": 5500,
+    "tuner": 5500,
+    "reviewer": 6000,
+    "submitter": 4000,
+    "coder": 8000,
+}
 
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
-def trim_text(text: str, character_limit: int) -> str:
-    if len(text) <= character_limit:
+def shorten_text(text: str, max_chars: int) -> str:
+    """Shorten long text at a sentence or word boundary with an ellipsis, never mid-word."""
+    if not text or len(text) <= max_chars:
         return text
-    marker = "\n...(trimmed)"
-    return text[: character_limit - len(marker)] + marker
+    truncated = text[:max_chars].rstrip()
+    last_punct = max(truncated.rfind(". "), truncated.rfind(".\n"))
+    if last_punct > max_chars // 2:
+        return truncated[: last_punct + 1] + " ..."
+    last_space = truncated.rfind(" ")
+    if last_space > max_chars // 2:
+        return truncated[:last_space] + " ..."
+    return truncated + " ..."
 
 
-def format_score(score: float | None) -> str:
-    return "n/a" if score is None else f"{score:.4f}"
+def pack_section(header: str, items: list[str], budget: int) -> tuple[str, int]:
+    """Pack whole items into a section up to budget.
 
-
-def describe_direction(higher_is_better: bool) -> str:
-    return "higher is better" if higher_is_better else "lower is better"
-
-
-def join_items(title: str, items: list[str]) -> str:
+    Guarantees at least 3 items or 400 characters if items exist.
+    """
     if not items:
+        return "", 0
+    header_line = f"{header}:" if header else ""
+    packed: list[str] = []
+    current_chars = len(header_line) + 1 if header_line else 0
+    min_count = min(3, len(items))
+
+    for i, item in enumerate(items):
+        item_len = len(item) + 1
+        if i < min_count or (current_chars < 400 and i < len(items)):
+            packed.append(item)
+            current_chars += item_len
+        elif current_chars + item_len <= budget:
+            packed.append(item)
+            current_chars += item_len
+        else:
+            break
+
+    if not packed:
+        return "", 0
+    lines = ([header_line] if header_line else []) + packed
+    text = "\n".join(lines)
+    return text, len(text)
+
+
+def assemble_sections(sections: list[tuple[str, list[str]]], total_budget: int) -> str:
+    """Assemble sections with budget flowing from unused sections to later ones."""
+    active = [(h, it) for h, it in sections if it]
+    if not active:
         return ""
-    return f"{title}: " + "; ".join(items)
+    remaining_budget = total_budget
+    built_texts: list[str] = []
+    for i, (header, items) in enumerate(active):
+        remaining_sections = len(active) - i
+        section_budget = max(remaining_budget // remaining_sections, 400)
+        text, used = pack_section(header, items, section_budget)
+        if text:
+            built_texts.append(text)
+            remaining_budget = max(remaining_budget - used - 2, 0)
+    return "\n\n".join(built_texts)
 
 
-def describe_task(ledger: Ledger) -> str:
-    metrics_text = ledger.user_metrics_text or "not given"
-    return f"USER TASK: {ledger.user_task}\nUSER METRICS: {metrics_text}"
-
-
-def describe_brief(ledger: Ledger) -> str:
+def build_task_brief_items(ledger: Ledger) -> list[str]:
+    items = [
+        f"USER TASK: {ledger.user_task}",
+        f"USER METRICS: {ledger.user_metrics_text or 'not given'}",
+    ]
     brief = ledger.brief
-    if not brief.summary:
-        return ""
-    metric_text = f"{brief.primary_metric} ({describe_direction(brief.higher_is_better)})"
-    lines = [
-        "PROJECT BRIEF:",
-        f"- summary: {brief.summary}",
-        f"- modality: {brief.modality}, task family: {brief.task_family}",
-        f"- target: {brief.target or 'none'}, id column: {brief.id_column or 'none'}",
-        f"- primary metric: {metric_text}",
-        f"- extra metrics: {', '.join(brief.extra_metrics) or 'none'}",
-        f"- deliverable: {brief.deliverable_format}",
-    ]
-    for file_info in brief.files[:FILES_SHOWN]:
-        lines.append(f"- file: {file_info.path} ({file_info.kind}, {file_info.role})")
-    if len(brief.files) > FILES_SHOWN:
-        lines.append(f"- ... and {len(brief.files) - FILES_SHOWN} more files")
-    lines.append(join_items("- open questions", brief.open_questions))
-    return "\n".join(line for line in lines if line)
+    if brief.summary:
+        items.append(f"Brief summary: {brief.summary}")
+        items.append(f"Modality: {brief.modality}, Task family: {brief.task_family}")
+        items.append(f"Target: {brief.target or 'none'}, ID column: {brief.id_column or 'none'}")
+        dir_text = "higher is better" if brief.higher_is_better else "lower is better"
+        items.append(f"Primary metric: {brief.primary_metric} ({dir_text})")
+        if brief.extra_metrics:
+            items.append(f"Extra metrics: {', '.join(brief.extra_metrics)}")
+        if brief.deliverable_format:
+            items.append(f"Deliverable format: {brief.deliverable_format}")
+        for f in brief.files[:10]:
+            cols_note = ""
+            if f.columns:
+                col_sample = ", ".join(f.columns[:10])
+                if len(f.columns) > 10:
+                    col_sample += f", ... ({len(f.columns)} total)"
+                cols_note = f" | columns: [{col_sample}]"
+            items.append(f"- file: {f.path} ({f.kind}, {f.role}, {f.size_mb:.1f} MB){cols_note}")
+        if len(brief.files) > 10:
+            items.append(f"- ... and {len(brief.files) - 10} more files")
+        if brief.open_questions:
+            items.append(f"Open questions: {'; '.join(brief.open_questions)}")
+    return items
 
 
-def sorted_findings(ledger: Ledger) -> list:
-    findings = sorted(ledger.eda.findings, key=lambda finding: PRIORITY_ORDER[finding.priority])
-    return findings[:FINDINGS_SHOWN]
-
-
-def describe_eda(ledger: Ledger) -> str:
+def build_eda_items(ledger: Ledger) -> list[str]:
     eda = ledger.eda
-    if not eda.findings and not eda.feature_ideas:
-        return ""
-    lines = ["EDA FINDINGS:"]
-    for finding in sorted_findings(ledger):
-        lines.append(
-            f"- {finding.finding_id} [{finding.priority}] {finding.statement}"
-            f" -> {finding.implication}"
-        )
-    lines.append(join_items("DATA ISSUES", eda.issues))
-    lines.append(join_items("LEAKAGE RISKS", eda.leakage_risks))
-    lines.append(join_items("VALIDATION HINTS", eda.validation_hints))
-    lines.append(join_items("MODEL HINTS", eda.model_hints))
-    idea_texts = [f"{idea.description} ({idea.finding_id})" for idea in eda.feature_ideas]
-    lines.append(join_items("FEATURE IDEAS", idea_texts))
-    return "\n".join(line for line in lines if line)
+    items: list[str] = []
+    if eda.summary:
+        items.append(f"EDA Summary: {eda.summary}")
+    sorted_findings = sorted(eda.findings, key=lambda f: PRIORITY_ORDER.get(f.priority, 1))
+    for f in sorted_findings[:12]:
+        items.append(f"- {f.finding_id} [{f.priority}] {f.statement} -> {f.implication}")
+    if eda.issues:
+        items.append(f"Data issues: {'; '.join(eda.issues)}")
+    if eda.leakage_risks:
+        items.append(f"Leakage risks: {'; '.join(eda.leakage_risks)}")
+    if eda.validation_hints:
+        items.append(f"Validation hints: {'; '.join(eda.validation_hints)}")
+    if eda.model_hints:
+        items.append(f"Model hints: {'; '.join(eda.model_hints)}")
+    open_ideas = ledger.open_feature_ideas()
+    if open_ideas:
+        idea_strs = [f"{i.description} ({i.finding_id})" if i.finding_id else i.description for i in open_ideas[:8]]
+        items.append(f"Open feature ideas: {'; '.join(idea_strs)}")
+    if eda.open_questions:
+        items.append(f"Open questions: {'; '.join(eda.open_questions)}")
+    return items
 
 
-def describe_eda_progress(ledger: Ledger) -> str:
-    eda = ledger.eda
-    open_items = [item for item, status in eda.checklist.items() if status == "open"]
-    covered_count = sum(1 for status in eda.checklist.values() if status == "covered")
-    lines = [
-        f"EDA ROUNDS USED: {eda.eda_loops_used}",
-        f"CHECKLIST: {covered_count} covered, {len(open_items)} open",
-        join_items("OPEN CHECKLIST ITEMS", open_items),
-    ]
-    if eda.findings:
-        lines.append("FINDINGS SO FAR:")
-        for finding in sorted_findings(ledger):
-            lines.append(f"- {finding.finding_id} [{finding.priority}] {finding.statement}")
-    return "\n".join(line for line in lines if line)
-
-
-def describe_leakage_risks(ledger: Ledger) -> str:
-    return join_items("KNOWN LEAKAGE RISKS", ledger.eda.leakage_risks)
-
-
-def describe_plan(ledger: Ledger) -> str:
+def build_plan_items(ledger: Ledger) -> list[str]:
     plan = ledger.plan
-    if not plan.primary_metric:
-        return ""
-    metric_text = f"{plan.primary_metric} ({describe_direction(plan.higher_is_better)})"
-    validation_text = plan.validation_scheme
+    if not plan.validation_scheme and not plan.baseline_description:
+        return []
+    items: list[str] = []
+    val_text = plan.validation_scheme
     if plan.validation_reason:
-        validation_text += f" ({plan.validation_reason})"
-    target_text = plan.target_score if plan.target_score is not None else "none"
-    lines = [
-        "PLAN:",
-        f"- primary metric: {metric_text}",
-        f"- extra metrics: {', '.join(plan.extra_metrics) or 'none'}",
-        f"- validation: {validation_text}",
-        f"- splits file: {plan.splits_path}" if plan.splits_path else "",
-        f"- baseline: {plan.baseline_description}" if plan.baseline_description else "",
-        f"- target score: {target_text}",
-        f"- use GPU: {'yes' if plan.use_gpu else 'no'}",
-        join_items("- risks", plan.risks),
-        f"- playbook: {trim_text(plan.playbook, PLAYBOOK_CHARS)}" if plan.playbook else "",
-    ]
-    return "\n".join(line for line in lines if line)
+        val_text += f" ({plan.validation_reason})"
+    items.append(f"Validation scheme: {val_text}")
+    if plan.splits_path:
+        items.append(f"Splits path: {plan.splits_path}")
+    if plan.baseline_description:
+        items.append(f"Baseline: {plan.baseline_description}")
+    items.append(f"Target score: {plan.target_score if plan.target_score is not None else 'none'}")
+    items.append(f"Use GPU: {'yes' if plan.use_gpu else 'no'}")
+    if plan.risks:
+        items.append(f"Risks: {'; '.join(plan.risks)}")
+    if plan.playbook:
+        items.append(f"Playbook: {shorten_text(plan.playbook, 800)}")
+    return items
 
 
-def describe_features(ledger: Ledger) -> str:
+def build_features_items(ledger: Ledger) -> list[str]:
     if not ledger.features:
-        return ""
-    lines = [f"FEATURES TRIED (current features file is version {ledger.current_feature_version}):"]
-    for feature in ledger.features[-FEATURES_SHOWN:]:
-        gain_text = "gain n/a" if feature.score_gain is None else f"gain {feature.score_gain:+.4f}"
-        kept_text = "kept" if feature.kept else "dropped"
-        lines.append(f"- {feature.feature_id} {feature.name}: {kept_text}, {gain_text}")
-    return "\n".join(lines)
+        return []
+    items = [f"Current features version: v{ledger.current_feature_version}"]
+    families: dict[str, list[FeatureRecord]] = {}
+    for f in ledger.features:
+        fam = f.family or "general"
+        families.setdefault(fam, []).append(f)
+    for fam, feats in families.items():
+        kept = [f for f in feats if f.kept]
+        dropped = [f for f in feats if not f.kept]
+        kept_strs = [
+            f"{f.name} ({f.score_gain:+.4f})" if f.score_gain is not None else f.name
+            for f in kept
+        ]
+        dropped_strs = [
+            f"{f.name} ({f.score_gain:+.4f})" if f.score_gain is not None else f.name
+            for f in dropped
+        ]
+        items.append(
+            f"- family '{fam}': kept {len(kept)} ({', '.join(kept_strs) or 'none'}), "
+            f"dropped {len(dropped)} ({', '.join(dropped_strs) or 'none'})"
+        )
+    return items
 
 
-def describe_run(ledger: Ledger, run: ExperimentRun) -> str:
-    evaluation = ledger.find_evaluation(run.experiment_id)
-    if run.crashed:
-        status = "crashed"
-    elif evaluation is None:
-        status = "not evaluated"
-    else:
-        status = "approved" if evaluation.verdict == "approve" else "rejected"
-    spread_text = "" if run.score_std is None else f" +/- {run.score_std:.4f}"
-    description = trim_text(run.description, DESCRIPTION_CHARS)
-    return (
-        f"- {run.experiment_id} | {run.focus} | {run.model_family} | "
-        f"score {format_score(run.score_mean)}{spread_text} | {status} | {description}"
-    )
-
-
-def describe_runs(ledger: Ledger) -> str:
+def build_runs_items(ledger: Ledger) -> list[str]:
     if not ledger.runs:
-        return ""
-    best_runs = sorted(
-        ledger.approved_runs(),
-        key=lambda run: run.score_mean,
-        reverse=ledger.plan.higher_is_better,
-    )[:BEST_RUNS_SHOWN]
-    latest_runs = ledger.runs[-LATEST_RUNS_SHOWN:]
-    shown_ids = {run.experiment_id for run in best_runs + latest_runs}
-    shown_runs = [run for run in ledger.runs if run.experiment_id in shown_ids]
-
+        return []
+    items: list[str] = []
     best_run = ledger.best_approved_run()
-    best_text = best_run.experiment_id if best_run else "none yet"
-    lines = [f"EXPERIMENT RUNS (showing {len(shown_runs)} of {len(ledger.runs)}):"]
-    lines.append(f"BEST APPROVED RUN: {best_text}")
-    lines.extend(describe_run(ledger, run) for run in shown_runs)
-    return "\n".join(lines)
+    if best_run:
+        items.append(f"BEST APPROVED RUN: {best_run.headline}")
+    else:
+        items.append("BEST APPROVED RUN: none yet")
+
+    # Latest runs headlines
+    items.append(f"RECENT RUNS (total {len(ledger.runs)}):")
+    for run in ledger.runs[-8:]:
+        items.append(f"- {run.headline}")
+
+    # Rejections
+    rejections = [r for r in ledger.runs if r.verdict == "reject"][-4:]
+    if rejections:
+        items.append("RECENT EVALUATOR REJECTIONS:")
+        for r in rejections:
+            items.append(f"- {r.experiment_id} ({r.model_family}): {'; '.join(r.verdict_reasons)}")
+    return items
 
 
-def describe_crashes(ledger: Ledger) -> str:
-    crashes = ledger.recent_crashes(CRASHES_SHOWN)
-    if not crashes:
-        return ""
-    lines = ["RECENT CRASHES (do not repeat them):"]
-    for run in crashes:
-        lines.append(
-            f"- {run.experiment_id} {run.model_family}: {run.error[-MAX_ERROR_TEXT_CHARS:]}"
+def build_history_items(ledger: Ledger) -> list[str]:
+    items: list[str] = []
+    cards = ledger.round_cards()
+    if cards:
+        items.append("ROUND HISTORY:")
+        for c in cards[-6:]:
+            items.append(f"- {c}")
+    dead_ends = ledger.dead_ends()
+    if dead_ends:
+        items.append("KNOWN DEAD ENDS:")
+        for d in dead_ends[:8]:
+            items.append(f"- {d}")
+    if ledger.reviews:
+        latest = ledger.reviews[-1]
+        items.append(
+            f"LATEST REVIEW (round {latest.iteration}): chose {latest.focus}. {latest.reason}"
         )
-    return "\n".join(lines)
+        for instr in latest.instructions:
+            items.append(f"  * {instr}")
+    return items
 
 
-def describe_evaluations(ledger: Ledger) -> str:
-    rejections = [e for e in ledger.evaluations if e.verdict == "reject"][-REJECTIONS_SHOWN:]
-    if not rejections:
-        return ""
-    lines = ["RECENT REJECTIONS BY THE EVALUATOR:"]
-    for evaluation in rejections:
-        lines.append(f"- {evaluation.experiment_id}: {'; '.join(evaluation.reasons)}")
-    return "\n".join(lines)
+def build_budget_line_item(ledger: Ledger) -> list[str]:
+    return [
+        f"BUDGET: Round {ledger.iteration} | script time limit 20 min | EDA rounds {ledger.eda.eda_loops_used}"
+    ]
 
 
-def describe_reviews(ledger: Ledger) -> str:
-    if not ledger.reviews:
-        return ""
-    lines = ["LATEST REVIEWS:"]
-    for review in ledger.reviews[-REVIEWS_SHOWN:]:
-        gain_text = "yes" if review.counted_gain else "no"
-        lines.append(
-            f"- after round {review.iteration}: ran {review.reviewed_focus} (counted gain: "
-            f"{gain_text}), then chose {review.focus}. {review.reason}"
-        )
-        for instruction in review.instructions:
-            lines.append(f"  instruction: {instruction}")
-    return "\n".join(lines)
-
-
-SectionBuilder = Callable[[Ledger], str]
-
-SECTION_BUILDERS_BY_AGENT: dict[str, list[SectionBuilder]] = {
-    "data_engineer": [describe_task],
-    "data_analyst": [describe_task, describe_brief, describe_eda_progress],
-    "ml_lead": [describe_task, describe_brief, describe_eda],
-    "feature_engineer": [
-        describe_task,
-        describe_plan,
-        describe_brief,
-        describe_reviews,
-        describe_features,
-        describe_eda,
-        describe_runs,
-        describe_crashes,
-    ],
-    "modeler": [
-        describe_task,
-        describe_plan,
-        describe_brief,
-        describe_reviews,
-        describe_runs,
-        describe_crashes,
-        describe_features,
-        describe_eda,
-    ],
-    "evaluator": [describe_plan, describe_leakage_risks, describe_runs, describe_evaluations],
-    "tuner": [describe_plan, describe_runs, describe_evaluations, describe_crashes],
-    "reviewer": [
-        describe_task,
-        describe_plan,
-        describe_brief,
-        describe_runs,
-        describe_evaluations,
-        describe_reviews,
-        describe_features,
-        describe_crashes,
-        describe_eda,
-    ],
-    "submitter": [
-        describe_task,
-        describe_brief,
-        describe_plan,
-        describe_runs,
-        describe_evaluations,
-    ],
-    "coder": [describe_plan, describe_crashes],
-}
+def build_machine_items(ledger: Ledger) -> list[str]:
+    return [f"COMPUTE: use_gpu={ledger.plan.use_gpu}"]
 
 
 def build_digest(agent_name: str, ledger: Ledger) -> str:
-    section_builders = SECTION_BUILDERS_BY_AGENT[agent_name]
-    section_texts = [build_section(ledger) for build_section in section_builders]
-    digest = "\n\n".join(text for text in section_texts if text)
-    return trim_text(digest, DIGEST_CHAR_LIMITS[agent_name])
+    """Build the prompt digest for a specific agent."""
+    limit = DIGEST_CHAR_LIMITS.get(agent_name, 6000)
+
+    if agent_name == "reviewer":
+        # Targeted reviewer digest per section 4
+        sections = [
+            ("PROJECT BRIEF", build_task_brief_items(ledger)),
+            ("EDA FINDINGS", build_eda_items(ledger)),
+            ("FEATURES", build_features_items(ledger)),
+            ("RUNS", build_runs_items(ledger)),
+            ("HISTORY", build_history_items(ledger)),
+            ("BUDGET", build_budget_line_item(ledger)),
+        ]
+    elif agent_name == "data_engineer":
+        sections = [("TASK", [f"USER TASK: {ledger.user_task}", f"USER METRICS: {ledger.user_metrics_text or 'not given'}"])]
+    elif agent_name == "data_analyst":
+        sections = [
+            ("PROJECT BRIEF", build_task_brief_items(ledger)),
+            ("EDA FINDINGS", build_eda_items(ledger)),
+            ("BUDGET", build_budget_line_item(ledger)),
+        ]
+    elif agent_name == "ml_lead":
+        sections = [
+            ("PROJECT BRIEF", build_task_brief_items(ledger)),
+            ("EDA FINDINGS", build_eda_items(ledger)),
+            ("BUDGET", build_budget_line_item(ledger)),
+            ("MACHINE", build_machine_items(ledger)),
+        ]
+    elif agent_name == "feature_engineer":
+        sections = [
+            ("TASK & BRIEF", build_task_brief_items(ledger)),
+            ("PLAN", build_plan_items(ledger)),
+            ("HISTORY", build_history_items(ledger)),
+            ("FEATURES", build_features_items(ledger)),
+            ("EDA FINDINGS", build_eda_items(ledger)),
+            ("RUNS", build_runs_items(ledger)),
+            ("BUDGET", build_budget_line_item(ledger)),
+        ]
+    elif agent_name == "modeler":
+        sections = [
+            ("TASK & BRIEF", build_task_brief_items(ledger)),
+            ("PLAN", build_plan_items(ledger)),
+            ("HISTORY", build_history_items(ledger)),
+            ("RUNS", build_runs_items(ledger)),
+            ("FEATURES", build_features_items(ledger)),
+            ("EDA HINTS", build_eda_items(ledger)),
+            ("BUDGET", build_budget_line_item(ledger)),
+            ("MACHINE", build_machine_items(ledger)),
+        ]
+    elif agent_name == "evaluator":
+        sections = [
+            ("PLAN", build_plan_items(ledger)),
+            ("TASK & BRIEF", build_task_brief_items(ledger)),
+            ("RUNS", build_runs_items(ledger)),
+            ("EDA LEAKAGE RISKS", [f"- {r}" for r in ledger.eda.leakage_risks]),
+            ("HISTORY", build_history_items(ledger)),
+            ("BUDGET", build_budget_line_item(ledger)),
+        ]
+    elif agent_name == "tuner":
+        sections = [
+            ("PLAN", build_plan_items(ledger)),
+            ("RUNS", build_runs_items(ledger)),
+            ("HISTORY", build_history_items(ledger)),
+            ("BUDGET", build_budget_line_item(ledger)),
+            ("MACHINE", build_machine_items(ledger)),
+        ]
+    elif agent_name == "submitter":
+        sections = [
+            ("TASK & BRIEF", build_task_brief_items(ledger)),
+            ("PLAN", build_plan_items(ledger)),
+            ("RUNS", build_runs_items(ledger)),
+            ("BUDGET", build_budget_line_item(ledger)),
+        ]
+    else:  # coder or general
+        sections = [
+            ("PLAN", build_plan_items(ledger)),
+            ("RUNS", build_runs_items(ledger)),
+            ("BUDGET", build_budget_line_item(ledger)),
+            ("MACHINE", build_machine_items(ledger)),
+        ]
+
+    return assemble_sections(sections, limit)
+
+
+def build_report_facts(ledger: Ledger) -> str:
+    """Build the comprehensive facts document for the final report (~14,000 chars).
+
+    Priority order:
+    1. final result and best run
+    2. brief
+    3. EDA summary and high-priority findings
+    4. kept features
+    5. round cards
+    6. Evaluator rejections and what they caught
+    7. dead ends
+    8. medium findings
+    9. runs table
+    """
+    total_budget = 14000
+    best_run = ledger.best_approved_run()
+
+    # 1. Final result and best run
+    final_items = [
+        f"Final predictions path: {ledger.final.predictions_path or 'none'}",
+        f"Ensemble: {ledger.final.ensemble_description or 'single best model'}",
+    ]
+    if best_run:
+        final_items.append(f"Best run: {best_run.headline}")
+        if best_run.model_path:
+            final_items.append(f"Best model path: {best_run.model_path}")
+        if best_run.validation_scores:
+            scores_str = ", ".join(f"{s:.4f}" for s in best_run.validation_scores)
+            final_items.append(f"Validation split scores: [{scores_str}]")
+        if best_run.holdout_score is not None:
+            final_items.append(f"Holdout score: {best_run.holdout_score:.4f}")
+        if best_run.extra_scores:
+            extra_str = ", ".join(f"{k}: {v:.4f}" for k, v in best_run.extra_scores.items())
+            final_items.append(f"Extra metrics: {extra_str}")
+    else:
+        final_items.append("Best run: none")
+
+    # 2. Brief
+    brief_items = build_task_brief_items(ledger)
+
+    # 3. EDA summary and high-priority findings
+    eda_high_items: list[str] = []
+    if ledger.eda.summary:
+        eda_high_items.append(f"EDA Summary: {ledger.eda.summary}")
+    high_findings = [f for f in ledger.eda.findings if f.priority == "high"]
+    for f in high_findings:
+        eda_high_items.append(
+            f"- {f.finding_id} [high] {f.statement} -> {f.implication} (evidence: {f.evidence})"
+        )
+    if ledger.eda.leakage_risks:
+        eda_high_items.append(f"Leakage risks: {'; '.join(ledger.eda.leakage_risks)}")
+
+    # 4. Kept features
+    kept_features = [f for f in ledger.features if f.kept]
+    kept_items = [
+        f"- {f.name} ({f.family or 'general'}): gain {f.score_gain:+.4f if f.score_gain is not None else 'n/a'} | finding: {f.finding_id or 'none'} | reason: {f.reason}"
+        for f in kept_features
+    ]
+    if not kept_items:
+        kept_items = ["No features kept"]
+
+    # 5. Round cards
+    round_cards = ledger.round_cards()
+    card_items = [f"- {c}" for c in round_cards] or ["No rounds finished"]
+
+    # 6. Evaluator rejections
+    rejections = [r for r in ledger.runs if r.verdict == "reject"]
+    rej_items = [
+        f"- {r.experiment_id} ({r.model_family}): rejected because {'; '.join(r.verdict_reasons)}"
+        for r in rejections
+    ] or ["No rejected runs"]
+
+    # 7. Dead ends
+    dead_ends = ledger.dead_ends()
+    dead_items = [f"- {d}" for d in dead_ends] or ["None"]
+
+    # 8. Medium findings
+    med_findings = [f for f in ledger.eda.findings if f.priority == "medium"]
+    med_items = [
+        f"- {f.finding_id} [medium] {f.statement} -> {f.implication}"
+        for f in med_findings
+    ]
+
+    # 9. Runs table
+    table_lines = [
+        "| Run | Model | Features | Score | Gain vs Best | Status | Summary |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for r in ledger.runs:
+        score_val = f"{r.score_mean:.4f}" if r.score_mean is not None else "n/a"
+        gain_val = f"{r.gain_vs_best:+.4f}" if r.gain_vs_best is not None else "-"
+        summary_short = shorten_text(r.summary or "no summary", 80)
+        table_lines.append(
+            f"| {r.experiment_id} | {r.model_family} | v{r.feature_version} | {score_val} | {gain_val} | {r.status} | {summary_short} |"
+        )
+
+    sections = [
+        ("FINAL RESULT & BEST RUN", final_items),
+        ("PROJECT BRIEF", brief_items),
+        ("EDA SUMMARY & HIGH-PRIORITY FINDINGS", eda_high_items),
+        ("KEPT FEATURES", kept_items),
+        ("ROUND CARDS", card_items),
+        ("EVALUATOR REJECTIONS", rej_items),
+        ("DEAD ENDS", dead_items),
+        ("ADDITIONAL FINDINGS", med_items),
+        ("EXPERIMENT RUNS TABLE", table_lines),
+    ]
+
+    return assemble_sections(sections, total_budget)
 
 
 def build_progress_text(ledger: Ledger) -> str:
     """A short readable summary for the user, saved as memory/progress.md."""
     best_run = ledger.best_approved_run()
-    if best_run:
-        best_score = format_score(best_run.score_mean)
-        best_text = f"{best_run.experiment_id} ({best_run.model_family}), score {best_score}"
-    else:
-        best_text = "none yet"
+    best_text = best_run.headline if best_run else "none yet"
     last_review = ledger.reviews[-1] if ledger.reviews else None
+
     lines = [
         "# mlagent progress",
         "",
@@ -305,47 +464,14 @@ def build_progress_text(ledger: Ledger) -> str:
         f"Metrics asked for: {ledger.user_metrics_text or 'not given'}",
     ]
     if last_review:
-        lines += ["", "## Latest review", f"Focus {last_review.focus}: {last_review.reason}"]
+        lines += [
+            "",
+            "## Latest review",
+            f"Focus {last_review.focus}: {last_review.reason}",
+            f"Lesson: {last_review.lesson or 'none'}",
+        ]
+    if ledger.runs:
+        lines += ["", "## Runs"]
+        for run in ledger.runs:
+            lines.append(f"- {run.headline}")
     return "\n".join(lines) + "\n"
-
-
-def describe_dataset_columns(project_folder: Path, brief: ProjectBrief | None = None) -> str:
-    """List the column names of tabular data files in the project folder."""
-    import pandas as pd
-
-    candidate_files: list[Path] = []
-    if brief and brief.files:
-        for f in brief.files:
-            file_path = project_folder / f.path
-            if file_path.is_file() and f.kind == "table":
-                candidate_files.append(file_path)
-
-    # Search directly in project_folder for csv/parquet/tsv if none found
-    if not candidate_files:
-        for ext in ("*.csv", "*.parquet", "*.tsv"):
-            for p in sorted(project_folder.glob(ext)):
-                name_lower = p.name.lower()
-                if not name_lower.startswith(".") and "mlagent" not in name_lower:
-                    candidate_files.append(p)
-
-    if not candidate_files:
-        return ""
-
-    lines = ["DATASET COLUMNS:"]
-    for file_path in candidate_files[:6]:
-        try:
-            rel_name = file_path.relative_to(project_folder).as_posix()
-        except ValueError:
-            rel_name = file_path.name
-        try:
-            if file_path.suffix.lower() == ".parquet":
-                cols = pd.read_parquet(file_path).columns.tolist()
-            else:
-                cols = pd.read_csv(file_path, nrows=0).columns.tolist()
-            lines.append(f"- {rel_name}: {cols} (total {len(cols)} columns)")
-        except Exception:
-            continue
-
-    if len(lines) == 1:
-        return ""
-    return "\n".join(lines)

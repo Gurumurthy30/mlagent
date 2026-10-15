@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 import httpx
 import ollama
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel, ValidationError
 
@@ -29,6 +30,14 @@ from mlagent.settings import (
     RETRY_WAIT_SECONDS,
     RETRYABLE_STATUS_CODES,
 )
+
+TEAM_CHARTER = """\
+You are an expert member of an autonomous ML engineering team.
+Core team rules:
+- The project folder is read-only. Never change, move, or delete the user's raw files.
+- Write every output file inside the workspace folder.
+- Every score or metric reported must come directly from a script's executed output. Never invent numbers.
+- Start simple with solid baselines. Add complexity only when empirical validation improves."""
 
 AnswerModel = TypeVar("AnswerModel", bound=BaseModel)
 
@@ -112,11 +121,15 @@ class LlmClient:
                 f"Model '{model_name}' is not pulled in Ollama. Run: ollama pull {model_name}"
             )
 
-    def ask_text(self, agent_name: str, prompt: str) -> str:
-        return self._ask(agent_name, prompt, json_schema=None)
+    def ask_text(self, agent_name: str, prompt: str, system_message: str | None = None) -> str:
+        return self._ask(agent_name, prompt, json_schema=None, system_message=system_message)
 
     def ask_structured(
-        self, agent_name: str, prompt: str, answer_model: type[AnswerModel]
+        self,
+        agent_name: str,
+        prompt: str,
+        answer_model: type[AnswerModel],
+        system_message: str | None = TEAM_CHARTER,
     ) -> AnswerModel:
         json_schema = answer_model.model_json_schema()
         schema_note = (
@@ -128,7 +141,9 @@ class LlmClient:
         problem = ""
         total_tries = LLM_REPAIR_RETRIES + 1
         for _ in range(total_tries):
-            response_text = self._ask(agent_name, current_prompt, json_schema)
+            response_text = self._ask(
+                agent_name, current_prompt, json_schema, system_message=system_message
+            )
             try:
                 return answer_model.model_validate_json(extract_json_text(response_text))
             except ValidationError as validation_error:
@@ -142,14 +157,26 @@ class LlmClient:
             f"Last problem: {problem}"
         )
 
-    def _call_model(self, prompt: str, json_schema: dict | None) -> str:
+    def _call_model(
+        self, prompt: str, json_schema: dict | None, system_message: str | None = None
+    ) -> str:
         """The only method that talks to Ollama. Tests replace it with scripted answers."""
         send_schema = json_schema is not None and not is_cloud_direct(self.model_config.base_url)
         keyword_arguments = {"format": json_schema} if send_schema else {}
-        answer = self.chat_model.invoke(prompt, **keyword_arguments)
+        if system_message:
+            messages = [SystemMessage(content=system_message), HumanMessage(content=prompt)]
+            answer = self.chat_model.invoke(messages, **keyword_arguments)
+        else:
+            answer = self.chat_model.invoke(prompt, **keyword_arguments)
         return answer.content
 
-    def _ask(self, agent_name: str, prompt: str, json_schema: dict | None) -> str:
+    def _ask(
+        self,
+        agent_name: str,
+        prompt: str,
+        json_schema: dict | None,
+        system_message: str | None = None,
+    ) -> str:
         self.event_bus.emit(
             EventType.INFO,
             agent_name,
@@ -162,7 +189,7 @@ class LlmClient:
             max_attempts = len(RETRY_WAIT_SECONDS) + 1
             for attempt in range(max_attempts):
                 try:
-                    response_text = self._call_model(prompt, json_schema)
+                    response_text = self._call_model(prompt, json_schema, system_message)
                     error_text = ""
                     break
                 except ollama.ResponseError as error:
