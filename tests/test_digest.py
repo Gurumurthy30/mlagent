@@ -66,8 +66,8 @@ def test_reviewer_digest_includes_eda_when_available(ledger: Ledger) -> None:
 @given(ledger=st_ledger())
 def test_report_facts_inclusions(ledger: Ledger) -> None:
     """build_report_facts includes the best approved run and high priority findings when available."""
-    facts = build_report_facts(ledger, char_limit=14000)
-    assert len(facts) <= 14000
+    facts = build_report_facts(ledger, char_limit=15000)
+    assert len(facts) <= 15000
     assert " None " not in facts
 
     best = ledger.best_approved_run()

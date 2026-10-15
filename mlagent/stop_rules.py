@@ -20,17 +20,15 @@ STUCK_FOCUS_LIMIT = 3
 
 
 def decide_stop_reason(
-    ledger: Ledger, limits_or_max_loops: LimitsConfig | int = 15
+    ledger: Ledger, limits_or_max_loops: LimitsConfig | int = 8
 ) -> StopReason | None:
     """The reason the experiment loop must end now, or None to go on."""
     if isinstance(limits_or_max_loops, LimitsConfig):
         max_loops = limits_or_max_loops.max_experiment_loops
         max_crashes = limits_or_max_loops.max_consecutive_crashes
-        plateau_patience = limits_or_max_loops.plateau_rounds
     else:
         max_loops = int(limits_or_max_loops)
         max_crashes = 3
-        plateau_patience = 3
 
     if ledger.focus == "finish":
         return "reviewer_finish"
@@ -51,13 +49,6 @@ def decide_stop_reason(
         return "crashes"
     if ledger.iteration >= max_loops:
         return "budget"
-
-    # Check plateau
-    latest_reviews = ledger.reviews[-plateau_patience:]
-    if len(latest_reviews) == plateau_patience and not any(
-        ledger.round_had_gain(r.iteration) for r in latest_reviews
-    ):
-        return "plateau"
 
     return None
 

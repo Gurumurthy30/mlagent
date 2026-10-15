@@ -213,7 +213,7 @@ def render_confirmation_panel(
             f"  Task: {task}\n"
             f"  Metrics: {metrics or 'Agents will decide'}\n"
             f"  Data folder: {data_folder}\n"
-            f"  Max experiment loops: {getattr(limits, 'max_experiment_loops', 15)}\n"
+            f"  Max experiment loops: {getattr(limits, 'max_experiment_loops', 8)}\n"
             f"  Workspace: {workspace_folder}\n"
             f"  Model: {model_name}"
         )
@@ -225,7 +225,7 @@ def render_confirmation_panel(
     grid.add_row("Task:", f"[{theme.accent}]{task}[/]")
     grid.add_row("Metrics:", metrics if metrics else f"[{theme.muted}]Agents will decide[/]")
     grid.add_row("Data folder:", str(data_folder))
-    grid.add_row("Loop limits:", f"{getattr(limits, 'max_experiment_loops', 15)} experiment rounds (EDA cap: {getattr(limits, 'max_eda_loops', 4)})")
+    grid.add_row("Loop limits:", f"{getattr(limits, 'max_experiment_loops', 8)} experiment rounds (EDA cap: {getattr(limits, 'max_eda_loops', 4)})")
     grid.add_row("Workspace:", str(workspace_folder))
     grid.add_row("Model:", f"[{theme.info}]{model_name}[/]")
 

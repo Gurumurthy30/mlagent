@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ValidationError
 
-from mlagent.settings import MIN_RELATIVE_GAIN
 
 if TYPE_CHECKING:
     from mlagent.state import ExperimentRun
@@ -69,8 +68,7 @@ def is_counted_gain(
         return mean_difference > 0 and mean_difference > standard_error
 
     improvement = score_improvement(new_scores, best_scores, higher_is_better)
-    margin = MIN_RELATIVE_GAIN * abs(statistics.fmean(best_scores))
-    return improvement > max(margin, 0.0) and improvement > 0
+    return improvement > 0
 
 
 def make_setup_signature(model_family: str, model_params: dict, feature_version: int) -> str:

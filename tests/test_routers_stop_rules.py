@@ -101,9 +101,9 @@ def test_stop_reason_crash_limit() -> None:
 
 
 @pytest.mark.unit
-def test_stop_reason_plateau_patience() -> None:
-    """Stop rule ends the run when rounds with no gain reach plateau patience."""
-    limits = LimitsConfig(plateau_rounds=3)
+def test_stop_reason_no_plateau_stop() -> None:
+    """Rounds with no gain do not stop the loop on plateau, continuing toward budget."""
+    limits = LimitsConfig(max_experiment_loops=5)
     reviews = [
         Review(iteration=1, focus="features"),
         Review(iteration=2, focus="model"),
@@ -115,8 +115,8 @@ def test_stop_reason_plateau_patience() -> None:
         ExperimentRun(experiment_id="run_2", iteration=2, counted_gain=False),
         ExperimentRun(experiment_id="run_3", iteration=3, counted_gain=False),
     ]
-    ledger = Ledger(user_task="test", reviews=reviews, runs=runs)
-    assert decide_stop_reason(ledger, limits) == "plateau"
+    ledger = Ledger(user_task="test", reviews=reviews, runs=runs, iteration=3)
+    assert decide_stop_reason(ledger, limits) is None
 
 
 @pytest.mark.unit

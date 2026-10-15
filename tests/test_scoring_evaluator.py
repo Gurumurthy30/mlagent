@@ -42,6 +42,17 @@ def test_is_counted_gain_monotonicity() -> None:
 
 
 @pytest.mark.unit
+def test_is_counted_gain_few_splits_positive_improvement() -> None:
+    """When fewer than 3 splits are compared, any positive improvement is counted without min margin."""
+    baseline = [0.80]
+    new = [0.8005]
+    assert is_counted_gain(new, baseline, higher_is_better=True)
+
+    worse = [0.7995]
+    assert not is_counted_gain(worse, baseline, higher_is_better=True)
+
+
+@pytest.mark.unit
 def test_evaluator_rejects_train_val_overlap() -> None:
     """Evaluator hard checks strictly reject any train/validation overlap."""
     run = ExperimentRun(experiment_id="run_1", score_mean=0.85, score_std=0.01)

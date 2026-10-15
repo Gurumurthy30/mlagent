@@ -40,10 +40,10 @@ DECISION RULES (in priority order):
 from the plan have not yet been trained, prioritize `model` exploration before tuning or adding more features.
    - "features": If feature version is stable and model performance is bottlenecked by specific subgroups, error segments, \
 or unexploited EDA feature ideas. Instruct Feature Engineer with exact column names and mathematical transforms.
-   - "model": If feature version was upgraded or current model family has plateaued, switch to an untried model family \
+   - "model": If feature version was upgraded or current model family is not improving, switch to an untried model family \
 (`lightgbm` -> `catboost` -> `xgboost` -> `ridge`/`mlp`) to build ensemble diversity.
    - "tune": If a top-performing model family is established, features are stable, and hyperparameters have never been searched.
-   - "data": If cross-validation behavior is erratic, holdout gap is large, or performance plateaued across 2 rounds without \
+   - "data": If cross-validation behavior is erratic, holdout gap is large, or performance has stalled across 2 rounds without \
 counted gain, reopen EDA to inspect worst out-of-fold errors in `val_predictions.csv`.
    - "finish": Only when improvements have saturated cleanly across multiple model families and minimum rounds are completed.
 2. HYPOTHESIS LEDGER & LESSON RECORDING (`hypothesis_verdict`):

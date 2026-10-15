@@ -88,7 +88,7 @@ class LimitsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_experiment_loops: int = Field(
-        default=15,
+        default=8,
         ge=1,
         le=100,
         description="Maximum rounds of the experiment loop",
@@ -129,18 +129,6 @@ class LimitsConfig(BaseModel):
         le=10,
         description="Stop rule threshold for consecutive script crashes",
     )
-    plateau_rounds: int = Field(
-        default=3,
-        ge=1,
-        le=20,
-        description="Stop rule patience: consecutive rounds with no counted gain",
-    )
-    min_relative_gain: float = Field(
-        default=0.001,
-        ge=0.0,
-        le=0.1,
-        description="Minimum relative margin for counted gain when splits are few",
-    )
     tune_trial_count: int = Field(
         default=20,
         ge=1,
@@ -148,10 +136,10 @@ class LimitsConfig(BaseModel):
         description="Number of Optuna tuning trials per tuning round",
     )
     candidates_per_feature_round: int = Field(
-        default=5,
+        default=15,
         ge=1,
-        le=20,
-        description="Maximum candidate feature ideas proposed per round",
+        le=50,
+        description="Maximum candidate feature ideas proposed per round (recommended 10-15)",
     )
 
 
@@ -159,25 +147,25 @@ class EvaluationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     score_tolerance_relative: float = Field(
-        default=0.02,
+        default=0.05,
         ge=0.0,
         le=0.5,
         description="Relative mismatch allowed between logged and recomputed validation scores",
     )
     holdout_gap_std_multiplier: float = Field(
-        default=3.0,
+        default=4.0,
         ge=0.1,
         le=10.0,
         description="Multiplier of CV standard deviation allowed for holdout score drop",
     )
     holdout_gap_relative_limit: float = Field(
-        default=0.05,
+        default=0.08,
         ge=0.0,
         le=0.5,
         description="Maximum relative drop allowed on holdout score before flagging",
     )
     large_score_jump_std_multiplier: float = Field(
-        default=3.0,
+        default=4.0,
         ge=0.1,
         le=10.0,
         description="Score jump threshold (std multiplier) that triggers rejection if leakage flag is set",
@@ -188,37 +176,37 @@ class ContextConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     data_engineer: int = Field(
-        default=8500, ge=1000, le=64000, description="Digest character budget for Data Engineer"
+        default=9500, ge=1000, le=64000, description="Digest character budget for Data Engineer"
     )
     data_analyst: int = Field(
-        default=7000, ge=1000, le=64000, description="Digest character budget for Data Analyst"
+        default=8000, ge=1000, le=64000, description="Digest character budget for Data Analyst"
     )
     ml_lead: int = Field(
-        default=6000, ge=1000, le=64000, description="Digest character budget for ML Lead"
+        default=7000, ge=1000, le=64000, description="Digest character budget for ML Lead"
     )
     feature_engineer: int = Field(
-        default=14000, ge=2000, le=128000, description="Digest character budget for Feature Engineer"
+        default=15000, ge=2000, le=128000, description="Digest character budget for Feature Engineer"
     )
     modeler: int = Field(
-        default=8000, ge=1000, le=64000, description="Digest character budget for Modeler"
+        default=9000, ge=1000, le=64000, description="Digest character budget for Modeler"
     )
     evaluator: int = Field(
-        default=6000, ge=1000, le=64000, description="Digest character budget for Evaluator"
+        default=7000, ge=1000, le=64000, description="Digest character budget for Evaluator"
     )
     tuner: int = Field(
-        default=6000, ge=1000, le=64000, description="Digest character budget for Tuner"
+        default=7000, ge=1000, le=64000, description="Digest character budget for Tuner"
     )
     reviewer: int = Field(
-        default=8000, ge=1000, le=64000, description="Digest character budget for Reviewer"
+        default=9000, ge=1000, le=64000, description="Digest character budget for Reviewer"
     )
     submitter: int = Field(
-        default=5000, ge=1000, le=64000, description="Digest character budget for Submitter"
+        default=6000, ge=1000, le=64000, description="Digest character budget for Submitter"
     )
     coder: int = Field(
-        default=8000, ge=1000, le=64000, description="Digest character budget for Coder"
+        default=9000, ge=1000, le=64000, description="Digest character budget for Coder"
     )
     report_facts: int = Field(
-        default=14000, ge=2000, le=128000, description="Context character budget for final report facts"
+        default=15000, ge=2000, le=128000, description="Context character budget for final report facts"
     )
 
 

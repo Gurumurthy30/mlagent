@@ -1,26 +1,101 @@
 # mlagent
 
-A multi-agent command line system that runs a machine learning project from start to finish.
-You go to the project folder, run one command, say what the task is, and the agents explore the
-data, plan the validation, build features, train and check models, tune the best ones, and
-write a report and a predictions file. All language model calls go to a local
-[Ollama](https://ollama.com) model through `langchain-ollama`. The agents are wired together
-with LangGraph.
+<p align="center">
+  <a href="https://github.com/Gurumurthy30/mlagent/actions"><img src="https://github.com/Gurumurthy30/mlagent/actions/workflows/pytest.yml/badge.svg" alt="Tests"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg" alt="Python Version"></a>
+  <a href="https://ollama.com"><img src="https://img.shields.io/badge/Ollama-local%20llm-orange.svg" alt="Ollama"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"></a>
+</p>
 
-It is meant for any kind of ML task: tabular, images, text, audio, time series, supervised or
-not. The agents are told what the task is in your own words, and they write the code that fits.
+<p align="center">
+  <strong>An autonomous multi-agent machine learning engineering system that takes projects from raw data to validated ensemble predictions.</strong>
+</p>
 
-## Requirements
+---
 
-- Python 3.11 or newer (Python 3.12 tested and recommended)
-- Ollama running locally (or remote endpoint), with the model from `config.yaml` already pulled (default `gemma4:31b`)
-- A machine that can run the code the agents write. Image, text and audio tasks benefit from a GPU.
+`mlagent` operates directly in your project folder. You launch one command, describe your task in natural language, and an orchestrated team of specialized agents handles the rest: exploring data, structuring cross-validation, engineering leak-free features, exploring model architectures, tuning hyperparameters, validating against leakage, and compiling final predictions with an executive technical report.
 
-## Install
+All language model calls run locally through [Ollama](https://ollama.com) via LangGraph orchestration—keeping your data and models 100% private on your machine.
 
-### Windows (PowerShell)
+---
 
-If PowerShell blocks script execution (`UnauthorizedAccess`), set the process execution policy first:
+## 💡 Key Innovations
+
+* **Grandmaster EDA & Feature Engineering Probes**: Moves beyond basic `.describe()` checklists to automated string decomposition, group-relative stats, missingness architecture, and target-encoded features.
+* **Leak-Free Fold Isolation**: Strictly enforces that all feature engineering and transformations fit inside training folds (`fit_preparation` / `apply_preparation`).
+* **Robust Coder Self-Repair**: Equipped with automatic traceback fixing, library lookups, and pre-flight assertions.
+* **Independent Verification & Anti-Leakage Guard**: The Evaluator independently recomputes validation scores and holdout metrics to prevent false discoveries and data leakage.
+* **Full Observability & Resume Capabilities**: Live terminal UI with instant progress status, full reproducibility, and automatic resumption if interrupted.
+
+---
+
+## ⚡ Quickstart
+
+Run `mlagent` directly in any directory containing your dataset:
+
+```powershell
+# 1. Navigate to your Kaggle or ML project folder
+cd C:\my_kaggle_project
+
+# 2. Launch the multi-agent pipeline
+mlagent start
+```
+
+When prompted, simply describe your objective:
+```
+> What is the task? Predict customer churn. Train is train.csv, test is test.csv.
+> What are the primary metrics? macro F1 mainly, also report AUC
+```
+
+The agents immediately probe the environment, inspect the datasets, and begin iterative development.
+
+---
+
+## 📦 Installation
+
+<p>
+  <a href="#-windows-cmd"><img src="https://img.shields.io/badge/Platform-cmd-blue?style=for-the-badge&logo=windows" alt="cmd"></a>
+  <a href="#-linux--wsl-bash"><img src="https://img.shields.io/badge/Platform-bash-green?style=for-the-badge&logo=gnu-bash" alt="bash"></a>
+  <a href="#-macos-mac"><img src="https://img.shields.io/badge/Platform-mac-lightgrey?style=for-the-badge&logo=apple" alt="mac"></a>
+</p>
+
+### Select Your Platform
+
+<details open id="-windows-cmd">
+<summary><b>💻 Windows Command Prompt (cmd)</b></summary>
+
+```cmd
+python -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+pip install -e .
+```
+</details>
+
+<details id="-linux--wsl-bash">
+<summary><b>🐧 Linux / WSL (bash)</b></summary>
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e .
+```
+</details>
+
+<details id="-macos-mac">
+<summary><b>🍎 macOS (mac)</b></summary>
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e .
+```
+</details>
+
+<details>
+<summary><b>⚡ Windows PowerShell</b></summary>
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
@@ -29,170 +104,134 @@ python -m venv .venv
 python -m pip install --upgrade pip
 pip install -e .
 ```
-
-### Windows (Command Prompt - cmd.exe)
-
-```cmd
-python -m venv .venv
-.venv\Scripts\activate.bat
-python -m pip install --upgrade pip
-pip install -e .
-```
-
-### Linux or macOS
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
+</details>
 
 ### Extra Dependencies
 
-Extra libraries for deep learning, audio, vision, and development:
+Install domain-specific packages as needed:
 
-```powershell
-pip install -e ".[deep]"        # torch, transformers, timm, sentence-transformers
+```bash
+pip install -e ".[deep]"        # PyTorch, transformers, timm, sentence-transformers
 pip install -e ".[audio]"       # librosa, soundfile
 pip install -e ".[vision]"      # opencv-python
-pip install -e ".[dev]"         # pytest, ruff, black
 ```
 
-### GPU Support on Windows (PyTorch CUDA)
+### 🦙 Ollama Setup
 
-The default `torch` wheel on PyPI is CPU-only on Windows. For NVIDIA GPU acceleration, install the CUDA build first before running `pip install -e ".[deep]"`:
-
-```powershell
-# Example for CUDA 12.4 (see https://pytorch.org/get-started/locally for other versions)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-```
-
-Verify your Windows environment and GPU detection at any time:
-
-```powershell
-python -m mlagent.environment_probe
-```
-
-If it says `PyTorch: ... CPU only` while an NVIDIA GPU is available, the CUDA build is missing.
-
-### Ollama on Windows
-
-1. Download and install [Ollama for Windows](https://ollama.com/download/windows). Ollama runs as a background service at `http://localhost:11434`.
-2. Open PowerShell and pull the model configured in `config.yaml`:
-   ```powershell
+1. Download and install [Ollama](https://ollama.com). Ollama runs in the background at `http://localhost:11434`.
+2. Pull the default model:
+   ```bash
    ollama pull gemma4:31b
    ```
-3. Test connectivity in PowerShell:
-   ```powershell
-   Invoke-RestMethod http://localhost:11434/api/tags
+   *(You can also use other models such as `qwen2.5:32b` or `llama3.3:70b` by setting `llm.name` in `config.yaml`)*
+3. Verify environment and GPU detection at any time:
+   ```bash
+   python -m mlagent.environment_probe
    ```
 
-The agents may also run `pip install` automatically in your environment when a library is missing. Every command they run is written to `mlagent_workspace/logs/commands.log`.
+---
 
-## Use
+## 🚀 Usage & Commands
 
-```powershell
-cd C:\path\to\your\ml\project
+```bash
 mlagent start
 ```
 
-*Note on Windows:* If the `mlagent` executable is not in your current shell `PATH`, invoke the module directly:
+| Command | Description |
+|---|---|
+| `mlagent start` | Start interactive execution or resume an existing run |
+| `mlagent resume [folder]` | Resume an interrupted run directly without prompting |
+| `mlagent status [folder]` | Inspect current progress and scoreboard without interrupting the active run |
+| `mlagent config` | Print effective configuration with source hierarchy (CLI > file > default) |
+| `mlagent init-config` | Generate a starter `config.yaml` template |
+| `mlagent --version` | Display version information |
 
-```powershell
-python -m mlagent.cli start
-# or:
-python -m mlagent start
+### Useful CLI Flags
+
+- `--set section.key=value`: Override any configuration parameter directly from the command line.
+- `-v, --verbose`: Detailed logging output including script runs and diagnostics.
+- `-q, --quiet`: Compact log output showing milestones and final results.
+- `--plain`: Plain-text mode without ANSI styling or Live area (ideal for CI/CD or logging pipes).
+- `-y, --yes`: Skip confirmation prompt on launch.
+
+---
+
+## 🤖 The Agent Team
+
+Ten collaborative agents coordinated via LangGraph:
+
+```mermaid
+flowchart TD
+  A([mlagent start]) --> DE[Data Engineer] --> DA[Data Analyst]
+  DA -->|loop until eda.done| DA
+  DA -->|done| ML[ML Lead] --> SC{stop check}
+  SC -->|features| FE[Feature Engineer]
+  SC -->|model| M[Modeler]
+  SC -->|tune| T[Tuner]
+  SC -->|data| DR[Data Analyst revisit]
+  FE --> M
+  DR --> FE
+  M --> E[Evaluator]
+  T --> E
+  E --> R[Reviewer] --> SC
+  SC -->|stop| S[Submitter] --> RP[Report] --> Z([report and predictions])
 ```
 
-It asks two things, in your own words:
+| Agent | Responsibility |
+|---|---|
+| **Data Engineer** | Inspects project directory, analyzes file schemas, and builds the initial Project Brief. |
+| **Data Analyst** | Discovers correlations, distributions, data shifts, and informative missingness patterns. |
+| **ML Lead** | Plans the cross-validation strategy, sets metrics, and establishes baseline description. |
+| **Feature Engineer** | Designs leak-free transformation pipelines and screens candidate ideas on fixed folds. |
+| **Modeler** | Explores diverse model families (LightGBM, CatBoost, XGBoost, Ridge, MLP, Ensembles). |
+| **Evaluator** | Independently audits score honesty, verifies holdout generalization, and checks for leakage. |
+| **Tuner** | Performs bounded Bayesian hyperparameter optimization on top-performing architectures. |
+| **Reviewer** | Evaluates iteration trajectories, records empirical findings, and steers next-round focus. |
+| **Submitter** | Verifies deliverable schema compliance and blends top models into final ensemble. |
+| **Coder** | Sub-agent that writes, executes, and self-repairs code with automated error recovery. |
 
-1. **The task**, for example: `"Predict which customers cancel next month. Train is train.csv, test is test.csv."`
-2. **The metrics**, for example: `"macro F1 mainly, also report AUC"`. You may list several, or press Enter and let the agents decide.
+---
 
-After that it runs autonomously. It prints one line per step. When it finishes it shows where the report and the predictions are.
+## 🖥️ Terminal Experience
 
-- **Ctrl+C** stops safely. Run `mlagent start` again and answer `resume`. An interrupted step is resumed cleanly from its beginning.
-- If a workspace already exists, it asks `resume` or `fresh`. A fresh start renames the old workspace to `mlagent_workspace_old_<time>`. Nothing is deleted, and your edited `config.yaml` is carried over.
-- `mlagent --version` displays version information.
-- `mlagent init-config` generates a starter `config.yaml` with basic keys uncommented and advanced keys documented.
-- `mlagent config` prints the effective configuration and source for every key.
-- `mlagent status [folder]` inspects current progress and renders the summary panel from the saved ledger without disrupting a running process.
-- `mlagent resume [folder]` resumes an interrupted run directly without prompting.
-- Override settings from the CLI with `--config <path>` or repeatable `--set section.key=value`.
+Underneath the scrolling event log, a 3-line live status display updates in place:
 
-## Reading the CLI
-
-The terminal UI gives you full visibility into what the agents will do, what they are doing right now, why decisions were made, and the final results.
-
-### Log Labels and Fixed Columns
-
-Event log lines appear in fixed-width columns with hanging indents for wrapped text:
-
-`HH:MM:SS  LABEL   Agent              Message`
-
-Every label is an uppercase code and a descriptive word, so meaning is never communicated by color alone:
-
-| Label | Descriptive Word | Meaning |
-|---|---|---|
-| `START` | `start` | An agent has started working on a phase or experiment |
-| `DONE` | `done` | An agent finished its phase or task |
-| `INFO` | `info` | Stage explanations and high-level milestones |
-| `DECIDE` | `decision` | Reviewer or router choices, formatted as `next = <focus>. Why: <reason>` |
-| `CODE` | `code` | Script execution details (displayed in `detailed` verbosity) |
-| `WARN` | `warn` | Non-fatal warnings or script crash notifications |
-| `ERROR` | `error` | Unrecoverable error causing failure or early diversion |
-| `RESULT` | `result` | Trained model scores, evaluation verdicts, or feature round summaries |
-| `STATUS` | `status` | Updates the live "Now" line only (never written to `run.log`) |
-
-### Live Status Area (3 lines)
-
-Underneath the scrolling event log, a small 3-line live display updates in place:
-1. **Stage Tracker**: `● Understand  →  ● Plan  →  ◉ Experiment (round 2/15)  →  ○ Deliver` showing completed (`●`), active (`◉`), and pending (`○`) stages.
-2. **Now**: The active agent, what action it is performing, why, and elapsed time (e.g. `Now: Modeler: training lightgbm on features v2, because last round showed gains from tree depth (1m 12s)`).
+1. **Stage Tracker**: `● Understand  →  ● Plan  →  ◉ Experiment (round 2/8)  →  ○ Deliver`
+2. **Now**: The active agent, its current action, rationale, and runtime.
 3. **Scoreboard**: Current best validation score, metric name and direction, approved runs count, and total elapsed runtime.
 
-### End-of-Run Summary Panel
+### End-of-Run Summary
 
-When the pipeline finishes, a summary panel is rendered directly from the ledger without calling the LLM:
+When execution finishes, a summary panel is displayed with complete transparency:
 - **Green border**: Completed successfully (`done`).
-- **Amber border**: Stopped early with an approved baseline model (`plateau`, `budget`, or user stopped).
+- **Amber border**: Stopped early with an approved baseline model (`budget` or user stopped).
 - **Red border**: Failed without any approved model.
 - Displays best model family, validation and holdout scores, key EDA findings, kept features, dead ends, trust metrics, deliverable paths, and next step copy-paste commands.
 
-### Verbosity and Customization Flags
+---
 
-Configure output through `config.yaml` under `ui:` or via CLI flags:
-- `-v, --verbose`: Detailed verbosity (includes script executions and per-step details).
-- `-q, --quiet`: Quiet verbosity (shows only stage changes, results, warnings, and errors).
-- `--plain`: Clean plain-text mode with no ANSI escape sequences and no Live area (ideal for piped output or dumb terminals).
-- `--no-color`: Monochrome theme without colored escape codes.
-- `--theme <dark|light|mono>`: Select custom color palette.
-- `-y, --yes`: Skip the "What I will do" confirmation prompt.
-- `--debug`: Display full exception tracebacks on unhandled errors.
+## 📁 Artifacts & Workspace
 
-## What it creates
-
-Everything goes into one folder inside your project. Your own files are never changed.
+All outputs are saved cleanly inside a single isolated folder in your project:
 
 ```
 mlagent_workspace/
-  config.yaml     the only settings you edit
-  memory/         ledger.json (all state), environment.json, progress.md (readable summary)
-  logs/           run.log, llm_calls.jsonl (every prompt and answer), commands.log
-  artifacts/      splits.json, features/, experiment_001/ ..., evaluation/, reviewer/
-  report/         report.md and the final predictions file
+  config.yaml     # Runtime configuration settings
+  memory/         # ledger.json (state), progress.md (readable summary)
+  logs/           # run.log, llm_calls.jsonl (prompts and answers), commands.log
+  artifacts/      # splits.json, features/, experiment_001/ ..., evaluation/
+  report/         # report.md and final predictions CSV
 ```
 
-## Configuration
+Your source data and files are strictly read-only and never modified.
 
-`config.yaml` can be created manually, generated with `mlagent init-config`, or automatically created on the first run.
-Configuration is split into two tiers:
-- **BASIC**: ~15 commonly tuned settings (uncommented by default in `config.yaml`).
-- **ADVANCED**: Finely tuned limits, context budgets, and evaluation thresholds (commented with descriptions in `config.yaml`).
+---
 
-Precedence is: **CLI flag (`--set`) > Config file (`config.yaml`) > Built-in defaults**.
+## ⚙️ Configuration Reference
 
-### Configuration Reference
+<details>
+<summary><b>Click to expand full Configuration Reference Table</b></summary>
+<br/>
 
 | Section | Key | Default | Tier | Description |
 |---|---|---|---|---|
@@ -203,32 +242,30 @@ Precedence is: **CLI flag (`--set`) > Config file (`config.yaml`) > Built-in def
 | `llm` | `request_timeout_seconds` | `900` | advanced | HTTP request timeout for LLM calls in seconds |
 | `llm` | `retries` | `2` | advanced | Maximum retries for JSON schema repair attempts |
 | `compute` | `use_gpu` | `auto` | basic | GPU utilization mode: auto (ML Lead decides per task), always, or never |
-| `limits` | `max_experiment_loops` | `15` | basic | Maximum rounds of the experiment loop |
+| `limits` | `max_experiment_loops` | `8` | basic | Maximum rounds of the experiment loop |
 | `limits` | `max_eda_loops` | `4` | basic | Maximum rounds for Data Analyst during EDA |
 | `limits` | `max_data_engineer_rounds` | `3` | advanced | Maximum rounds for Data Engineer inspection |
 | `limits` | `max_data_reentries` | `2` | advanced | Maximum times EDA can be reopened on Reviewer request |
 | `limits` | `code_timeout_minutes` | `30` | basic | Execution time limit for a single script run in minutes |
-| `limits` | `max_code_attempts` | `4` | basic | Maximum retry attempts for Coder to fix script errors |
+| `limits` | `max_code_attempts` | `5` | basic | Maximum retry attempts for Coder to fix script errors |
 | `limits` | `max_consecutive_crashes` | `3` | advanced | Stop rule threshold for consecutive script crashes |
-| `limits` | `plateau_rounds` | `3` | advanced | Stop rule patience: consecutive rounds with no counted gain |
-| `limits` | `min_relative_gain` | `0.001` | advanced | Minimum relative margin for counted gain when splits are few |
 | `limits` | `tune_trial_count` | `20` | advanced | Number of Optuna tuning trials per tuning round |
-| `limits` | `candidates_per_feature_round` | `5` | advanced | Maximum candidate feature ideas proposed per round |
-| `evaluation` | `score_tolerance_relative` | `0.02` | advanced | Relative mismatch allowed between logged and recomputed validation scores |
-| `evaluation` | `holdout_gap_std_multiplier` | `3.0` | advanced | Multiplier of CV standard deviation allowed for holdout score drop |
-| `evaluation` | `holdout_gap_relative_limit` | `0.05` | advanced | Maximum relative drop allowed on holdout score before flagging |
-| `evaluation` | `large_score_jump_std_multiplier` | `3.0` | advanced | Score jump threshold (std multiplier) that triggers rejection if leakage flag is set |
-| `context` | `data_engineer` | `8500` | advanced | Digest character budget for Data Engineer |
-| `context` | `data_analyst` | `5000` | advanced | Digest character budget for Data Analyst |
-| `context` | `ml_lead` | `4500` | advanced | Digest character budget for ML Lead |
-| `context` | `feature_engineer` | `16000` | advanced | Digest character budget for Feature Engineer |
-| `context` | `modeler` | `7000` | advanced | Digest character budget for Modeler |
-| `context` | `evaluator` | `5500` | advanced | Digest character budget for Evaluator |
-| `context` | `tuner` | `5500` | advanced | Digest character budget for Tuner |
-| `context` | `reviewer` | `5500` | advanced | Digest character budget for Reviewer |
-| `context` | `submitter` | `4000` | advanced | Digest character budget for Submitter |
-| `context` | `coder` | `8000` | advanced | Digest character budget for Coder |
-| `context` | `report_facts` | `14000` | advanced | Context character budget for final report facts |
+| `limits` | `candidates_per_feature_round` | `15` | advanced | Maximum candidate feature ideas proposed per round (recommended 10-15) |
+| `evaluation` | `score_tolerance_relative` | `0.05` | advanced | Relative mismatch allowed between logged and recomputed validation scores |
+| `evaluation` | `holdout_gap_std_multiplier` | `4.0` | advanced | Multiplier of CV standard deviation allowed for holdout score drop |
+| `evaluation` | `holdout_gap_relative_limit` | `0.08` | advanced | Maximum relative drop allowed on holdout score before flagging |
+| `evaluation` | `large_score_jump_std_multiplier` | `4.0` | advanced | Score jump threshold (std multiplier) that triggers rejection if leakage flag is set |
+| `context` | `data_engineer` | `9500` | advanced | Digest character budget for Data Engineer |
+| `context` | `data_analyst` | `8000` | advanced | Digest character budget for Data Analyst |
+| `context` | `ml_lead` | `7000` | advanced | Digest character budget for ML Lead |
+| `context` | `feature_engineer` | `15000` | advanced | Digest character budget for Feature Engineer |
+| `context` | `modeler` | `9000` | advanced | Digest character budget for Modeler |
+| `context` | `evaluator` | `7000` | advanced | Digest character budget for Evaluator |
+| `context` | `tuner` | `7000` | advanced | Digest character budget for Tuner |
+| `context` | `reviewer` | `9000` | advanced | Digest character budget for Reviewer |
+| `context` | `submitter` | `6000` | advanced | Digest character budget for Submitter |
+| `context` | `coder` | `9000` | advanced | Digest character budget for Coder |
+| `context` | `report_facts` | `15000` | advanced | Context character budget for final report facts |
 | `workspace` | `workspace_folder_name` | `mlagent_workspace` | basic | Folder name inside the project directory used for artifacts and memory |
 | `workspace` | `archived_workspace_prefix` | `mlagent_workspace_old_` | advanced | Prefix for archived previous workspace runs |
 | `workspace` | `big_file_mb` | `200` | advanced | File size in megabytes above which files are flagged as large |
@@ -245,124 +282,39 @@ Precedence is: **CLI flag (`--set`) > Config file (`config.yaml`) > Built-in def
 | `ui` | `ascii_only` | `False` | advanced | Use ASCII characters only instead of Unicode symbols |
 | `ui` | `log_width` | `100` | advanced | Terminal output line width limit |
 
+</details>
 
-## The team
+---
 
-Ten agents. Every agent that needs code hands a task to the **Coder**, which writes the script,
-runs it, reads the error and fixes it.
+## ❓ Frequently Asked Questions
 
-| Agent | Job |
-|---|---|
-| Data Engineer | Opens the folder, reads your words, writes the project brief |
-| Data Analyst | Exploratory data analysis with open questions and findings (self-loop) |
-| ML Lead | Validation plan, metric, baseline, `splits.json` |
-| Feature Engineer | Input preparation, screens candidate ideas on fixed splits |
-| Modeler | Trains models, rejects repeated setups |
-| Evaluator | Independent check of every result, hard rules and gain checks |
-| Tuner | Bounded parameter search of best models (no LLM) |
-| Reviewer | Evaluates rounds, tracks lessons, guides focus, and writes final report |
-| Submitter | Mechanical delivery checks and optional ensemble |
-| Coder | The sub-agent that writes and runs code for the others |
+<details>
+<summary><b>What if Ollama is not running?</b></summary>
+<br/>
+<code>mlagent</code> detects when the local Ollama server is unreachable and issues a clear alert prompting you to run <code>ollama serve</code> or start the Ollama desktop application. You can safely restart Ollama and run <code>mlagent start</code> to resume immediately.
+</details>
 
-```mermaid
-flowchart TD
-  A([mlagent start]) --> DE[Data Engineer] --> DA[Data Analyst]
-  DA -->|loop until eda.done| DA
-  DA -->|done| ML[ML Lead] --> SC{stop check}
-  SC -->|start or features| FE[Feature Engineer]
-  SC -->|model| M[Modeler]
-  SC -->|tune| T[Tuner]
-  SC -->|data| DR[Data Analyst revisit]
-  FE --> M
-  DR --> FE
-  M --> E[Evaluator]
-  T --> E
-  E --> R[Reviewer] --> SC
-  SC -->|stop| S[Submitter] --> RP[Report] --> Z([report and predictions])
-```
+<details>
+<summary><b>How do I resume an interrupted run?</b></summary>
+<br/>
+If execution was interrupted (e.g. system reboot or <code>Ctrl+C</code>), simply navigate to the directory and run <code>mlagent resume</code> or <code>mlagent start</code> and choose <b>resume</b>. The pipeline resumes cleanly from the exact point of interruption without losing previous experiments.
+</details>
 
-The loop stops for one of these reasons, decided by code and not by the language model: the
-Reviewer finished (only allowed after enough rounds), the target score was reached, three runs
-crashed in a row, the round limit was reached, three rounds in a row had no counted gain, or
-the language model became unavailable. In every case the best approved result so far is
-delivered.
+<details>
+<summary><b>Can I use a remote Ollama server or different model?</b></summary>
+<br/>
+Yes. Edit <code>mlagent_workspace/config.yaml</code> or pass flags directly:
+<pre><code>mlagent start --set llm.base_url="http://192.168.1.50:11434" --set llm.name="qwen2.5:32b"</code></pre>
+</details>
 
-A "counted gain" means a new result beats the best one by more than its noise: the mean of the
-per-split improvements must exceed its standard error (three or more splits), or a small
-relative margin otherwise.
+<details>
+<summary><b>How is data leakage prevented?</b></summary>
+<br/>
+All preprocessing and feature statistics (medians, frequency encoders, scalers) are fit strictly on training folds inside <code>fit_preparation</code> and deterministically transformed on validation/test sets via <code>apply_preparation</code>. The Evaluator independently checks fold overlap and flags distribution shifts.
+</details>
 
-## Testing
+---
 
-Install the development dependencies:
+## 📄 License
 
-```powershell
-pip install -e ".[dev]"
-```
-
-### Running Tests
-
-Run the full test suite (skips live Ollama tests by default):
-
-```powershell
-pytest
-```
-
-Run with test coverage report:
-
-```powershell
-pytest --cov=mlagent --cov-report=term-missing
-```
-
-Run static lint checks:
-
-```powershell
-ruff check .
-```
-
-### Test Markers
-
-Tests are organized with explicit pytest markers:
-- `unit`: Fast invariant, property, and contract tests on state, config, digest, routing, prompts, and scoring.
-  ```powershell
-  pytest -m unit
-  ```
-- `integration`: End-to-end LangGraph pipeline tests using fake LLM and canned Coder outputs.
-  ```powershell
-  pytest -m integration
-  ```
-- `live`: Tests requiring an active local Ollama server (skipped by default unless `MLAGENT_LIVE=1`).
-  ```powershell
-  $env:MLAGENT_LIVE="1"; pytest -m live
-  ```
-
-### Hypothesis Profiles & Seed Reproduction
-
-Property-based tests generate random ledgers and briefs using [Hypothesis](https://hypothesis.readthedocs.io/):
-- `HYPOTHESIS_PROFILE=dev` (default): Fast local execution (50 examples per property).
-- `HYPOTHESIS_PROFILE=ci`: CI matrix execution (100 examples per property).
-- `HYPOTHESIS_PROFILE=thorough`: Scheduled deep test runs (500 examples per property).
-
-Every test run outputs a reproducible session seed in the header:
-```
-mlagent session seed: 720004 (reproduce with --mlagent-seed=720004)
-```
-
-To reproduce any failure with the exact same pseudo-random sequence:
-```powershell
-pytest --mlagent-seed=720004
-# or via environment variable:
-$env:MLAGENT_TEST_SEED="720004"; pytest
-```
-
-## Honest limits
-
-- It has been tested with a scripted language model only. How well your real Ollama model
-  follows the prompts (one python block per answer, valid JSON) is only known from a live run.
-  If a run misbehaves, `logs/llm_calls.jsonl` and `logs/run.log` show exactly what happened.
-- There is no sandbox. The scripts run as you, with your permissions. The agents are told to
-  keep your project folder read only and a small deny-list blocks obviously destructive shell
-  commands (`rm -rf`, `shutdown` and similar), but that is a safety net and not isolation.
-- The automated tests use a tabular project. The agents are written without per-data-type
-  branches, but image, text and audio runs depend on your hardware and on the model writing
-  good code for them.
-- The time limit applies to one script run. The total time of a run is the sum of all of them.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

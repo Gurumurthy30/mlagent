@@ -11,16 +11,16 @@ if TYPE_CHECKING:
     from mlagent.state import FeatureRecord, Ledger
 
 DIGEST_CHAR_LIMITS: dict[str, int] = {
-    "data_engineer": 8500,
-    "data_analyst": 7000,
-    "ml_lead": 6000,
-    "feature_engineer": 14000,
-    "modeler": 8000,
-    "evaluator": 6000,
-    "tuner": 6000,
-    "reviewer": 8000,
-    "submitter": 5000,
-    "coder": 8000,
+    "data_engineer": 9500,
+    "data_analyst": 8000,
+    "ml_lead": 7000,
+    "feature_engineer": 15000,
+    "modeler": 9000,
+    "evaluator": 7000,
+    "tuner": 7000,
+    "reviewer": 9000,
+    "submitter": 6000,
+    "coder": 9000,
 }
 
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
@@ -367,7 +367,7 @@ def build_report_facts(ledger: Ledger, char_limit: int | None = None) -> str:
     8. medium findings
     9. runs table
     """
-    total_budget = char_limit if char_limit is not None else 14000
+    total_budget = char_limit if char_limit is not None else 15000
     best_run = ledger.best_approved_run()
 
     # 1. Final result and best run

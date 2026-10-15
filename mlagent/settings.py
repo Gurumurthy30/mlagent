@@ -68,13 +68,11 @@ MAX_QUESTIONS_PER_ROUND = 4
 RANDOM_SEED = 42
 MIN_EXPERIMENT_LOOPS = 3
 MAX_CONSECUTIVE_CRASHES = 3
-PLATEAU_ROUNDS = 3
 STUCK_FOCUS_LIMIT = 3
 MAX_DATA_REENTRIES = 2
 MIN_ROUNDS_BETWEEN_TUNING = 2
 TUNE_TRIAL_COUNT = 20
 TUNE_TOP_MODEL_COUNT = 2
-MIN_RELATIVE_GAIN = 0.001  # used when there are fewer than 3 validation scores to compare
 DEFAULT_SPLIT_COUNT = 5
 HOLDOUT_FRACTION = 0.1
 MIN_EXAMPLES_FOR_HOLDOUT = 1000
@@ -83,8 +81,8 @@ MIN_CANDIDATES = 10
 MAX_CANDIDATES = 20
 MAX_CANDIDATE_CODE_CHARS = 1500
 MAX_FEATURE_SOURCE_CHARS = 5000
-SCORE_MISMATCH_RELATIVE_TOLERANCE = 0.02
-HOLDOUT_GAP_RELATIVE = 0.05
+SCORE_MISMATCH_RELATIVE_TOLERANCE = 0.05
+HOLDOUT_GAP_RELATIVE = 0.08
 MAX_REVIEW_INSTRUCTIONS = 5
 ENSEMBLE_MAX_RUNS = 3
 TUNE_TIME_FRACTION = 0.6
@@ -107,14 +105,14 @@ SKIPPED_FOR_TIME_PREFIX = "skipped"
 CANDIDATE_FILE_HEADER = "import numpy as np\nimport pandas as pd\n\n\n"
 
 DIGEST_CHAR_LIMITS = {
-    "data_engineer": 8500,
-    "data_analyst": 7000,
-    "ml_lead": 6000,
-    "feature_engineer": 14000,
-    "modeler": 8000,
-    "evaluator": 6000,
-    "tuner": 6000,
-    "reviewer": 8000,
-    "submitter": 5000,
-    "coder": 8000,
+    "data_engineer": 9500,
+    "data_analyst": 8000,
+    "ml_lead": 7000,
+    "feature_engineer": 15000,
+    "modeler": 9000,
+    "evaluator": 7000,
+    "tuner": 7000,
+    "reviewer": 9000,
+    "submitter": 6000,
+    "coder": 9000,
 }
