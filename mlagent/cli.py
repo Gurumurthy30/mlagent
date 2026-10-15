@@ -6,6 +6,7 @@ This file only talks to the user and wires the parts together. All the work happ
 from __future__ import annotations
 
 import argparse
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -64,6 +65,37 @@ LlmClientFactory = Callable[..., LlmClient]
 def ask_required_text(ui: ConsoleUI, question: str) -> str:
     """Prompt user for required text and reject empty answers."""
     return ui.ask_required_task(question)
+
+
+def load_dotenv_if_present(folder: Path | None = None) -> None:
+    """Load variables from .env files into os.environ without overwriting existing environment."""
+    candidates = [Path.cwd() / ".env"]
+    if folder is not None:
+        folder_path = Path(folder).resolve()
+        candidates.extend([
+            folder_path / ".env",
+            folder_path.parent / ".env",
+            folder_path.parent.parent / ".env",
+        ])
+
+    seen_paths: set[Path] = set()
+    for path in candidates:
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        if path.is_file():
+            try:
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, val = line.split("=", 1)
+                    key = key.strip()
+                    val = val.strip().strip("'\"")
+                    if key and key not in os.environ:
+                        os.environ[key] = val
+            except Exception:
+                pass
 
 
 def show_final_summary(
@@ -174,6 +206,7 @@ def status_command(
     overrides: list[str] | None = None,
 ) -> int:
     """Render progress and summary view from a run's saved ledger without disturbing a running process."""
+    load_dotenv_if_present(project_folder)
     workspace = Workspace(project_folder)
     if not workspace.exists() or not workspace.has_saved_ledger():
         ui.show_message(
@@ -239,6 +272,7 @@ def start_command(
     force_resume: bool = False,
     debug: bool = False,
 ) -> int:
+    load_dotenv_if_present(project_folder)
     workspace = Workspace(project_folder)
     ui.show_header(__version__)
 
@@ -387,6 +421,7 @@ def flags_to_overrides(args: argparse.Namespace) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv_if_present()
     parser = argparse.ArgumentParser(
         prog="mlagent",
         description="A multi-agent system that runs a machine learning project end to end.",
