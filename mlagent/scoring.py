@@ -1,12 +1,31 @@
 """Score comparison rules used by the Feature Engineer, the Reviewer guards and the stop rules."""
 
+from __future__ import annotations
+
 import json
 import math
+from pathlib import Path
 import statistics
+from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel, ValidationError
 
 from mlagent.settings import MIN_RELATIVE_GAIN
 
+if TYPE_CHECKING:
+    from mlagent.state import ExperimentRun
+
 MIN_SCORES_FOR_PAIRED_COMPARISON = 3
+
+
+class ModelRunResult(BaseModel):
+    validation_scores: list[float]
+    holdout_score: float | None = None
+    extra_scores: dict[str, Any] = {}
+    validation_predictions_path: str = ""
+    test_predictions_path: str = ""
+    model_path: str = ""
+    notes: str = ""
 
 
 def all_finite(scores: list[float]) -> bool:
@@ -62,3 +81,42 @@ def make_setup_signature(model_family: str, model_params: dict, feature_version:
     """
     params_text = json.dumps(model_params, sort_keys=True, default=str)
     return f"{model_family.strip().lower()}|{params_text}|features_v{feature_version}"
+
+
+def fill_run_from_result(run: ExperimentRun, result_data: dict, experiment_folder: Path) -> str:
+    """Copy the script's result into the run. Returns the problem found, or '' when it is fine."""
+    try:
+        result = ModelRunResult.model_validate(result_data)
+    except ValidationError as error:
+        return f"The result line did not follow the contract: {error}"
+    if not all_finite(result.validation_scores):
+        return "validation_scores must be a non-empty list of finite numbers."
+
+    test_predictions_file = experiment_folder / "test_predictions.csv"
+    if not test_predictions_file.is_file():
+        if result.test_predictions_path:
+            p = Path(result.test_predictions_path)
+            alt = p if p.is_absolute() else experiment_folder / p
+            if alt.is_file():
+                test_predictions_file = alt
+        if not test_predictions_file.is_file():
+            return f"The test predictions file does not exist: {test_predictions_file}"
+
+    model_path_text = ""
+    if result.model_path:
+        p = Path(result.model_path)
+        model_path = p if p.is_absolute() else experiment_folder / p
+        if not model_path.exists():
+            return f"The model file does not exist: {model_path}"
+        model_path_text = str(model_path)
+
+    run.validation_scores = result.validation_scores
+    run.score_mean, run.score_std = mean_and_std(result.validation_scores)
+    run.holdout_score = result.holdout_score
+    run.extra_scores = {
+        str(k): float(v)
+        for k, v in result.extra_scores.items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
+    run.model_path = model_path_text
+    return ""

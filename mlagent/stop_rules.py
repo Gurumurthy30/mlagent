@@ -3,7 +3,6 @@
 When the experiment loop stops, and which focus the Reviewer is allowed to choose next.
 """
 
-from mlagent.scoring import is_counted_gain
 from mlagent.settings import (
     MAX_CONSECUTIVE_CRASHES,
     MAX_DATA_REENTRIES,
@@ -12,47 +11,14 @@ from mlagent.settings import (
     PLATEAU_ROUNDS,
     STUCK_FOCUS_LIMIT,
 )
-from mlagent.state import ExperimentRun, Ledger, Review, ReviewFocus, StopReason
+from mlagent.state import Ledger, Review, ReviewFocus, StopReason
 
 FOCUS_ORDER: list[ReviewFocus] = ["features", "model", "tune", "data"]
 
 
-def pick_best_run(runs: list[ExperimentRun], higher_is_better: bool) -> ExperimentRun | None:
-    if not runs:
-        return None
-    if higher_is_better:
-        return max(runs, key=lambda run: run.score_mean)
-    return min(runs, key=lambda run: run.score_mean)
-
-
 def round_had_counted_gain(ledger: Ledger, round_index: int) -> bool:
-    """Did the approved runs of this round beat the best approved run of the earlier rounds?
-
-    The first approved run counts as progress, because it sets the first best result.
-    """
-    approved_runs = ledger.approved_runs()
-    runs_this_round = [run for run in approved_runs if run.iteration == round_index]
-    if not runs_this_round:
-        return False
-    earlier_runs = [run for run in approved_runs if run.iteration < round_index]
-    best_earlier_run = pick_best_run(earlier_runs, ledger.plan.higher_is_better)
-    if best_earlier_run is None:
-        return True
-    return any(
-        is_counted_gain(
-            run.validation_scores, best_earlier_run.validation_scores, ledger.plan.higher_is_better
-        )
-        for run in runs_this_round
-    )
-
-
-def count_trailing_crashes(ledger: Ledger) -> int:
-    crash_count = 0
-    for run in reversed(ledger.runs):
-        if not run.crashed:
-            break
-        crash_count += 1
-    return crash_count
+    """Did any run in this round produce a counted gain?"""
+    return ledger.round_had_gain(round_index)
 
 
 def has_reached_target(ledger: Ledger) -> bool:
@@ -60,7 +26,7 @@ def has_reached_target(ledger: Ledger) -> bool:
     target_score = ledger.plan.target_score
     if best_run is None or target_score is None:
         return False
-    if ledger.plan.higher_is_better:
+    if ledger.brief.higher_is_better:
         return best_run.score_mean >= target_score
     return best_run.score_mean <= target_score
 
@@ -68,7 +34,7 @@ def has_reached_target(ledger: Ledger) -> bool:
 def is_on_plateau(ledger: Ledger) -> bool:
     latest_reviews = ledger.reviews[-PLATEAU_ROUNDS:]
     return len(latest_reviews) == PLATEAU_ROUNDS and not any(
-        review.counted_gain for review in latest_reviews
+        ledger.round_had_gain(review.iteration) for review in latest_reviews
     )
 
 
@@ -78,7 +44,7 @@ def decide_stop_reason(ledger: Ledger, max_experiment_loops: int) -> StopReason 
         return "reviewer_finish"
     if has_reached_target(ledger):
         return "target"
-    if count_trailing_crashes(ledger) >= MAX_CONSECUTIVE_CRASHES:
+    if ledger.trailing_crashes() >= MAX_CONSECUTIVE_CRASHES:
         return "crashes"
     if ledger.iteration >= max_experiment_loops:
         return "budget"
@@ -118,12 +84,12 @@ def describe_data_problem(ledger: Ledger, review: Review) -> str:
     return ""
 
 
-def describe_stuck_problem(history: list[Review], focus: ReviewFocus) -> str:
+def describe_stuck_problem(ledger: Ledger, history: list[Review], focus: ReviewFocus) -> str:
     latest_reviews = history[-STUCK_FOCUS_LIMIT:]
     if len(latest_reviews) < STUCK_FOCUS_LIMIT:
         return ""
     ran_same_focus = all(review.reviewed_focus == focus for review in latest_reviews)
-    if ran_same_focus and not any(review.counted_gain for review in latest_reviews):
+    if ran_same_focus and not any(ledger.round_had_gain(r.iteration) for r in latest_reviews):
         return f"{focus} gave no counted gain in the last {STUCK_FOCUS_LIMIT} rounds"
     return ""
 
@@ -137,7 +103,7 @@ def find_focus_problem(ledger: Ledger, review: Review) -> str:
         return describe_tune_problem(ledger, history)
     if review.focus == "data":
         return describe_data_problem(ledger, review)
-    return describe_stuck_problem(history, review.focus)
+    return describe_stuck_problem(ledger, history, review.focus)
 
 
 def pick_replacement_focus(ledger: Ledger, review: Review) -> ReviewFocus:
