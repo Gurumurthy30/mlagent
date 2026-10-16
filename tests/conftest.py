@@ -171,7 +171,12 @@ class FakeLlmClient:
             if isinstance(val, dict):
                 return schema.model_validate(val)
             if callable(val):
-                return schema.model_validate(val(prompt))
+                import inspect
+                sig = inspect.signature(val)
+                res = val(prompt, schema) if len(sig.parameters) >= 2 else val(prompt)
+                if isinstance(res, schema):
+                    return res
+                return schema.model_validate(res)
 
         # Generate a minimal valid schema instance dynamically
         return self._make_default_instance(schema)

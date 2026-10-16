@@ -1,10 +1,12 @@
-"""Workspace folders, saving and loading the ledger, and the log files."""
-
+import gc
 import json
 import os
 import shutil
+import stat
+import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -90,10 +92,42 @@ class Workspace:
                 pass
 
     def archive_existing(self) -> Path:
-        """Rename the current workspace so a fresh start never deletes old results."""
+        """Rename or copy the current workspace so a fresh start never deletes old results."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         archive_path = self.project_folder / f"{ARCHIVED_WORKSPACE_PREFIX}{timestamp}"
-        self.root.rename(archive_path)
+        counter = 1
+        while archive_path.exists():
+            archive_path = self.project_folder / f"{ARCHIVED_WORKSPACE_PREFIX}{timestamp}_{counter}"
+            counter += 1
+
+        # Attempt atomic directory rename with brief retries (allows locks to release on Windows)
+        for attempt in range(3):
+            gc.collect()
+            try:
+                self.root.rename(archive_path)
+                return archive_path
+            except (PermissionError, OSError):
+                if attempt < 2:
+                    time.sleep(0.3)
+
+        # On Windows, if open file handles, Explorer, or virus scanners prevent renaming the directory itself,
+        # copy the directory tree to archive_path, then clear the contents of self.root so old results
+        # are safely preserved and a clean workspace is ready for the fresh run.
+        try:
+            shutil.copytree(self.root, archive_path, dirs_exist_ok=True)
+        except Exception:
+            archive_path.mkdir(parents=True, exist_ok=True)
+            for item in self.root.iterdir():
+                try:
+                    if item.is_dir():
+                        shutil.copytree(item, archive_path / item.name, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(item, archive_path / item.name)
+                except Exception:
+                    pass
+
+        # Clean out self.root so fresh run starts with an empty workspace
+        _clear_directory_contents(self.root)
         return archive_path
 
     def experiment_folder(self, experiment_id: str) -> Path:
@@ -113,6 +147,36 @@ class Workspace:
     def is_ignored_folder(self, folder_name: str) -> bool:
         """True for folders the agents must not explore."""
         return folder_name in IGNORED_FOLDER_NAMES or folder_name.startswith(ARCHIVED_WORKSPACE_PREFIX)
+
+
+def _handle_remove_readonly(func: Any, path: Any, exc_info: Any) -> None:
+    """Handle read-only files on Windows during deletion."""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except Exception:
+        pass
+
+
+def _clear_directory_contents(directory: Path) -> None:
+    """Clear all files and subdirectories inside a directory without deleting the directory itself."""
+    if not directory.exists() or not directory.is_dir():
+        return
+    for item in list(directory.iterdir()):
+        try:
+            if item.is_dir():
+                try:
+                    shutil.rmtree(item, on_exc=_handle_remove_readonly)
+                except TypeError:
+                    shutil.rmtree(item, onerror=_handle_remove_readonly)
+            else:
+                try:
+                    os.chmod(item, stat.S_IWRITE)
+                except OSError:
+                    pass
+                item.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def is_ignored_folder_name(folder_name: str) -> bool:

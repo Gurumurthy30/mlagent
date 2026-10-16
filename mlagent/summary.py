@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console, ConsoleOptions, RenderResult
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -203,31 +204,39 @@ def render_confirmation_panel(
     workspace_folder: Path,
     model_name: str,
     config: UiConfig,
+    base_url: str | None = None,
 ) -> Panel | str:
     """Panel summarizing 'What I will do' before run confirmation."""
     theme = get_theme(config.theme)
+    max_exp = getattr(limits, "max_experiment_loops", 12) if limits is not None else 12
+    max_eda = getattr(limits, "max_eda_loops", 8) if limits is not None else 8
 
     if is_plain_mode(config):
-        return (
-            "What I will do:\n"
-            f"  Task: {task}\n"
-            f"  Metrics: {metrics or 'Agents will decide'}\n"
-            f"  Data folder: {data_folder}\n"
-            f"  Max experiment loops: {getattr(limits, 'max_experiment_loops', 8)}\n"
-            f"  Workspace: {workspace_folder}\n"
-            f"  Model: {model_name}"
-        )
+        plain_lines = [
+            "What I will do:",
+            f"  Task: {task}",
+            f"  Metrics: {metrics or 'Agents will decide'}",
+            f"  Data folder: {data_folder}",
+            f"  Max experiment loops: {max_exp}",
+            f"  Workspace: {workspace_folder}",
+        ]
+        if base_url:
+            plain_lines.append(f"  Ollama server: {base_url}")
+        plain_lines.append(f"  Model: {model_name}")
+        return "\n".join(plain_lines)
 
     grid = Table.grid(padding=(0, 2))
     grid.add_column("Label", style=theme.muted, justify="right")
     grid.add_column("Value", style=theme.text)
 
-    grid.add_row("Task:", f"[{theme.accent}]{task}[/]")
-    grid.add_row("Metrics:", metrics if metrics else f"[{theme.muted}]Agents will decide[/]")
+    grid.add_row("Task:", f"[{theme.accent}]{escape(task)}[/]")
+    grid.add_row("Metrics:", escape(metrics) if metrics else f"[{theme.muted}]Agents will decide[/]")
     grid.add_row("Data folder:", str(data_folder))
-    grid.add_row("Loop limits:", f"{getattr(limits, 'max_experiment_loops', 8)} experiment rounds (EDA cap: {getattr(limits, 'max_eda_loops', 4)})")
+    grid.add_row("Loop limits:", f"{max_exp} experiment rounds (EDA cap: {max_eda})")
     grid.add_row("Workspace:", str(workspace_folder))
-    grid.add_row("Model:", f"[{theme.info}]{model_name}[/]")
+    if base_url:
+        grid.add_row("Ollama server:", str(base_url))
+    grid.add_row("Model:", f"[{theme.info}]{escape(model_name)}[/]")
 
     return Panel(
         grid,
@@ -241,9 +250,17 @@ def render_confirmation_panel(
 class LiveStatusBar:
     """3-line Live status area: Stage Tracker, Current Agent ('Now'), and Scoreboard."""
 
-    def __init__(self, config: UiConfig, start_time: float) -> None:
+    def __init__(
+        self,
+        config: UiConfig,
+        start_time: float,
+        limits: Any | None = None,
+        model_name: str | None = None,
+    ) -> None:
         self.config = config
         self.start_time = start_time
+        self.limits = limits
+        self.model_name = model_name
         self.theme = get_theme(config.theme)
         self.symbols = get_symbols(config.ascii_only)
         self.current_agent = "Data Engineer"
@@ -272,7 +289,14 @@ class LiveStatusBar:
             total_elapsed = time.monotonic() - self.start_time
             act_text = self.current_action + (f", because {self.current_reason}" if self.current_reason else "")
             lines = build_live_status_renderable(
-                self.ledger, self.config, self.current_agent, act_text, action_elapsed, total_elapsed
+                self.ledger,
+                self.config,
+                self.current_agent,
+                act_text,
+                action_elapsed,
+                total_elapsed,
+                limits=self.limits,
+                model_name=self.model_name,
             )
             for line in lines:
                 yield line
@@ -327,6 +351,8 @@ def build_live_status_renderable(
     current_action: str,
     action_elapsed_seconds: float,
     total_elapsed_seconds: float,
+    limits: Any | None = None,
+    model_name: str | None = None,
 ) -> RenderResult:
     """Construct the 3-line live status block from current state."""
     theme = get_theme(config.theme)
@@ -374,7 +400,7 @@ def build_live_status_renderable(
 
     t_under, s_under = stage_marker(understand_state, "Understand")
     t_plan, s_plan = stage_marker(plan_state, "Plan")
-    max_loops = 15
+    max_loops = getattr(limits, "max_experiment_loops", 12) if limits is not None else 12
     exp_name = f"Experiment (round {ledger.iteration + 1}/{max_loops})" if phase == "experiment_loop" else "Experiment"
     t_exp, s_exp = stage_marker(exp_state, exp_name)
     t_del, s_del = stage_marker(deliver_state, "Deliver")
@@ -414,6 +440,8 @@ def build_live_status_renderable(
         line3.append("No approved baseline yet", style=theme.muted)
 
     line3.append(f" | Runs: {approved_count}/{total_runs} approved", style=theme.text)
+    if model_name:
+        line3.append(f" | Model: {model_name}", style="dim")
     line3.append(f" | Elapsed: {tot_str}", style="dim")
 
     return [line1, line2, line3]
@@ -474,17 +502,17 @@ def render_summary_panel(ledger: Ledger, config: UiConfig) -> Panel | str:
 
     # What the agents learned (EDA & findings)
     if ledger.eda.summary:
-        grid.add_row("EDA Summary:", ledger.eda.summary)
+        grid.add_row("EDA Summary:", escape(ledger.eda.summary))
     top_findings = ledger.eda.findings[:3]
     if top_findings:
-        findings_text = "\n".join(f"{symbols['bullet']} [{f.priority}] {f.statement}" for f in top_findings)
+        findings_text = "\n".join(f"{symbols['bullet']} [{escape(f.priority)}] {escape(f.statement)}" for f in top_findings)
         grid.add_row("Top Findings:", findings_text)
 
     # What helped and what did not
     kept_features = [f for f in ledger.features if f.kept]
     dropped_features = [f for f in ledger.features if not f.kept]
     if kept_features:
-        feat_str = ", ".join(f"{f.name} (+{f.score_gain:.4f})" if f.score_gain else f.name for f in kept_features[:4])
+        feat_str = ", ".join(f"{escape(f.name)} ({f.score_gain:+.4f})" if f.score_gain else escape(f.name) for f in kept_features[:4])
         grid.add_row("Kept Features:", feat_str)
     if dropped_features:
         grid.add_row("Dead Ends:", f"{len(dropped_features)} feature idea(s) rejected by validation screening")
@@ -512,7 +540,7 @@ def render_summary_panel(ledger: Ledger, config: UiConfig) -> Panel | str:
 
     return Panel(
         grid,
-        title=f"Project Summary - {ledger.user_task[:60] if ledger.user_task else 'ML Task'}",
+        title=f"Project Summary - {escape(ledger.user_task[:60]) if ledger.user_task else 'ML Task'}",
         title_align="left",
         border_style=border_color,
         padding=(0, 1),

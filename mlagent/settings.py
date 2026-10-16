@@ -37,7 +37,7 @@ IGNORED_FOLDER_NAMES = [
 
 MAX_CODE_ATTEMPTS = 5
 MAX_ERROR_TEXT_CHARS = 1500
-MAX_COMMAND_OUTPUT_CHARS = 20000
+MAX_COMMAND_OUTPUT_CHARS = 250000
 LOGGED_OUTPUT_CHARS = 2000
 MAX_LIBRARY_LOOKUPS = 3
 LIBRARY_HELP_CHARS = 1500
@@ -104,15 +104,3 @@ FEATURE_STEPS_NAME = "FEATURE_STEPS"
 SKIPPED_FOR_TIME_PREFIX = "skipped"
 CANDIDATE_FILE_HEADER = "import numpy as np\nimport pandas as pd\n\n\n"
 
-DIGEST_CHAR_LIMITS = {
-    "data_engineer": 9500,
-    "data_analyst": 8000,
-    "ml_lead": 7000,
-    "feature_engineer": 15000,
-    "modeler": 9000,
-    "evaluator": 7000,
-    "tuner": 7000,
-    "reviewer": 9000,
-    "submitter": 6000,
-    "coder": 9000,
-}

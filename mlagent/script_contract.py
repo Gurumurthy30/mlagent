@@ -80,4 +80,10 @@ def check_splits_file(splits_path: Path) -> list[str]:
     missing_folds = set(range(split_count)) - set(fold_of_example)
     if missing_folds:
         return [f"These validation splits have no examples: {sorted(missing_folds)}."]
+    n_holdout = sum(1 for f in fold_of_example if f == -1)
+    if len(fold_of_example) >= 100 and n_holdout > len(fold_of_example) * 0.35:
+        return [
+            f"Holdout has {n_holdout} examples ({n_holdout / len(fold_of_example):.1%}), which is too large. "
+            "Holdout should be ~10-15% of total examples with ~85%+ reserved for cross-validation."
+        ]
     return []

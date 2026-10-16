@@ -126,13 +126,25 @@ def prepare_workspace(ui: ConsoleUI, workspace: Workspace) -> bool:
             resuming = True
         else:
             if workspace.config_path.exists():
-                old_config_text = workspace.config_path.read_text(encoding="utf-8")
-            archive_path = workspace.archive_existing()
-            ui.show_message(f"The old workspace was kept as {archive_path.name}.")
+                try:
+                    old_config_text = workspace.config_path.read_text(encoding="utf-8")
+                except OSError:
+                    old_config_text = ""
+            try:
+                archive_path = workspace.archive_existing()
+                ui.show_message(f"The old workspace was kept as {archive_path.name}.")
+            except Exception as err:
+                ui.show_message(
+                    f"Notice: Could not archive previous workspace ({err}). Continuing with fresh workspace.",
+                    style="yellow",
+                )
 
     workspace.create_folders()
     if old_config_text:
-        workspace.config_path.write_text(old_config_text, encoding="utf-8")
+        try:
+            workspace.config_path.write_text(old_config_text, encoding="utf-8")
+        except OSError:
+            pass
     return resuming
 
 
@@ -355,6 +367,7 @@ def start_command(
             workspace_folder=workspace.root,
             model_name=config.llm.name,
             config=config.ui,
+            base_url=config.llm.base_url,
         )
         ui.console.print(conf_panel)
         if not ui.ask_confirm("Start?"):
@@ -374,6 +387,7 @@ def start_command(
     )
 
     # 5. Run Pipeline with Live Status Display
+    ui.set_run_context(limits=config.limits, model_name=config.llm.name)
     ui.start_live()
     ui.update_ledger(ledger)
     try:
@@ -405,6 +419,8 @@ def start_command(
 def flags_to_overrides(args: argparse.Namespace) -> list[str]:
     """Map command line flags to config override key paths."""
     ov: list[str] = list(getattr(args, "overrides", []) or [])
+    if getattr(args, "model", None):
+        ov.append(f"llm.name={args.model}")
     if getattr(args, "verbose", False):
         ov.append("ui.verbosity=detailed")
     elif getattr(args, "quiet", False):
@@ -430,6 +446,13 @@ def main(argv: list[str] | None = None) -> int:
 
     common_parser = argparse.ArgumentParser(add_help=False)
     common_parser.add_argument("--config", type=str, default=None, help="Path to config.yaml file")
+    common_parser.add_argument(
+        "-m",
+        "--model",
+        type=str,
+        default=None,
+        help="Ollama model name to use (e.g. gemma4:31b, qwen2.5:32b, llama3:8b)",
+    )
     common_parser.add_argument(
         "--set",
         dest="overrides",

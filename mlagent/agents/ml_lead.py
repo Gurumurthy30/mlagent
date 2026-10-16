@@ -152,18 +152,49 @@ def run_ml_lead(ledger: Ledger, agent_context: AgentContext) -> ExperimentPlan:
         f"Brief group_columns: {ledger.brief.group_columns}, time_columns: {ledger.brief.time_columns}\n"
         f"Structure from EDA: {hint_text}\n"
         f"Random seed: {RANDOM_SEED}. Default splits: {DEFAULT_SPLIT_COUNT}.\n"
-        f"Project folder: {workspace.project_folder}\n"
-        "SPLIT & HOLDOUT INTEGRITY RULES:\n"
-        "1. List each training example once (0-indexed row position for tables, relative path for file datasets).\n"
-        f"2. Holdout: if total examples >= {MIN_EXAMPLES_FOR_HOLDOUT}, assign ~{int(HOLDOUT_FRACTION * 100)}% of examples to `fold = -1` (holdout) "
-        f"and split the remaining ~{100 - int(HOLDOUT_FRACTION * 100)}% into CV folds `0 .. n_splits - 1`.\n"
-        "3. CRITICAL LEAK PREVENTION FOR HOLDOUT (`fold = -1`) AND CV FOLDS:\n"
-        "   - If scheme is `group_kfold`: extract the group key (if `group_or_time_column` is a composite ID like `PassengerId`, extract the prefix before `_` or `/` as specified). "
-        "Hold out ~10% of GROUPS as `fold = -1` and use `StratifiedGroupKFold` (for classification) or `GroupKFold` on the remaining 90% of groups so ZERO groups overlap between CV folds and holdout!\n"
-        "   - If scheme is `time_split`: sort by the time column; assign the latest ~10% of examples in time to `fold = -1`, and split the earlier 90% chronologically into folds `0 .. n_splits - 1`.\n"
-        "   - If scheme is `stratified_kfold`: preserve target class ratios (or binned target quantiles for continuous targets) across both `fold = -1` and folds `0 .. n_splits - 1`.\n"
-        f"4. Do not exceed {BIG_FILE_MB} MB in memory at once.\n\n"
-        f"{SPLITS_FORMAT_TEXT}"
+        f"Project folder: {workspace.project_folder}\n\n"
+        "CANONICAL SPLIT IMPLEMENTATION RECIPE:\n"
+        "1. Load training data (e.g. `df = pd.read_csv(...)`). Determine `n = len(df)`.\n"
+        "2. Initialize: `folds = np.full(n, -1, dtype=int)`.\n"
+        "3. Holdout selection (~10% of examples or groups, 0% if n < 500):\n"
+        "   - If `group_kfold`:\n"
+        "     * Extract group key. If group rule is prefix before '_' (e.g. PassengerId 'gggg_pp'), do `df['group_key'] = df[id_col].astype(str).str.split('_').str[0]`.\n"
+        "     * Unique groups: `u_groups = np.array(sorted(df['group_key'].unique()))`.\n"
+        "     * Shuffle unique groups: `np.random.RandomState(seed).shuffle(u_groups)`.\n"
+        "     * Holdout groups: take first ~10%: `n_hold = max(1, int(len(u_groups) * 0.10))`.\n"
+        "     * `holdout_groups = set(u_groups[:n_hold])`.\n"
+        "     * Rows in holdout_groups STAY `folds = -1`.\n"
+        "     * CV row positions: `cv_idx = np.where(~df['group_key'].isin(holdout_groups))[0]` (0-indexed integer array!).\n"
+        "     * Split `cv_idx` with `StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)` if classification, else `GroupKFold(n_splits=n_splits)`:\n"
+        "       ```python\n"
+        "       for fold_num, (_, val_pos) in enumerate(splitter.split(cv_idx, y.iloc[cv_idx], groups.iloc[cv_idx])):\n"
+        "           folds[cv_idx[val_pos]] = fold_num\n"
+        "       ```\n"
+        "   - If `stratified_kfold`:\n"
+        "     * Hold out ~10% with `StratifiedShuffleSplit(n_splits=1, test_size=0.10, random_state=seed)`.\n"
+        "       CAUTION: `train_idx, holdout_idx = next(sss.split(np.zeros(n), y))` (train_idx is 90% for CV, holdout_idx is 10%!).\n"
+        "     * Split the 90% `train_idx` with `StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)`:\n"
+        "       `for fold_num, (_, val_pos) in enumerate(skf.split(train_idx, y.iloc[train_idx])): folds[train_idx[val_pos]] = fold_num`.\n"
+        "   - If `kfold`:\n"
+        "     * `perm = np.random.RandomState(seed).permutation(n)`.\n"
+        "     * `n_hold = int(n * 0.10)`; `cv_idx = perm[n_hold:]` (holdout `perm[:n_hold]` stays `folds = -1`).\n"
+        "     * Split `cv_idx` with `KFold(n_splits=n_splits, shuffle=True, random_state=seed)`.\n"
+        "   - If `time_split`:\n"
+        "     * Sort rows by time column: `order = df[time_col].argsort().values`.\n"
+        "     * Latest ~10% stay `folds = -1`. Split earlier ~90% into `n_splits` chronological windows.\n"
+        "4. STRICT INTEGRITY ASSERTIONS (Must pass before saving):\n"
+        "   - `assert len(folds) == n, 'Folds length must match dataset rows'`\n"
+        "   - `assert not np.isnan(folds).any()`\n"
+        "   - `assert set(folds).issubset(set(range(-1, n_splits)))`\n"
+        "   - `for f in range(n_splits): assert (folds == f).sum() > 0, f'Fold {f} has no examples'`\n"
+        "   - `n_holdout = int((folds == -1).sum())`\n"
+        "   - `assert n_holdout <= int(n * 0.25), f'Holdout too large: {n_holdout}/{n}'`\n"
+        "5. SAVE SPLITS.JSON TO DISK:\n"
+        "   - Save full JSON to `splits_file` with keys: `scheme`, `seed`, `n_splits`, `id_description`: 'row position (0-indexed) in train.csv', `example_ids`: list(range(n)), `fold_of_example`: [int(x) for x in folds.tolist()].\n"
+        "6. STDOUT RESULT TAG CONTRACT:\n"
+        "   - The very last line printed to stdout MUST be `<SPLITS>{summary_json}</SPLITS>`.\n"
+        "   - CRITICAL: In `<SPLITS>`, ONLY include summary metadata: `{'splits_path': str(splits_file), 'n_splits': n_splits, 'n_examples': n, 'n_holdout': n_holdout}`.\n"
+        "   - NEVER print the huge `example_ids` or `fold_of_example` arrays to stdout (they are already saved in splits.json). Printing huge arrays will cause stdout buffer truncation!\n"
     )
 
     last_err = ""
@@ -179,14 +210,16 @@ def run_ml_lead(ledger: Ledger, agent_context: AgentContext) -> ExperimentPlan:
             ledger=ledger,
             agent_context=agent_context,
         )
+        problems = check_splits_file(splits_file)
+        if not problems:
+            last_err = ""
+            break
         if coder_res.succeeded:
-            problems = check_splits_file(splits_file)
-            if not problems:
-                last_err = ""
-                break
             last_err = "Splits file failed validation: " + " ".join(problems)
         else:
             last_err = last_error_line(coder_res.error_text)
+            if problems and "does not exist" not in problems[0]:
+                last_err = f"Splits file issues ({' '.join(problems)}) | Script error: {last_err}"
         event_bus.emit(EventType.WARNING, AGENT_NAME, f"splits try {try_num} failed: {last_err}")
 
     if last_err:

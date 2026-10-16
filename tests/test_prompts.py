@@ -171,22 +171,24 @@ def test_prompt_formats_without_error_and_escapes_literal_braces(
 def test_rendered_prompts_within_context_budget(ledger: Ledger) -> None:
     """Rendered digests and facts obey character limits for random ledgers."""
     config = AppConfig()
+    context_budget = config.llm.context
+    assert context_budget == 16384
 
     # Modeler prompt digest
-    modeler_digest = build_digest("modeler", ledger, char_limit=config.context.modeler)
-    assert len(modeler_digest) <= config.context.modeler
+    modeler_digest = build_digest("modeler", ledger, char_limit=context_budget)
+    assert len(modeler_digest) <= context_budget
 
     # Feature engineer prompt digest
-    fe_digest = build_digest("feature_engineer", ledger, char_limit=config.context.feature_engineer)
-    assert len(fe_digest) <= config.context.feature_engineer
+    fe_digest = build_digest("feature_engineer", ledger, char_limit=context_budget)
+    assert len(fe_digest) <= context_budget
 
     # Reviewer prompt digest
-    reviewer_digest = build_digest("reviewer", ledger, char_limit=config.context.reviewer)
-    assert len(reviewer_digest) <= config.context.reviewer
+    reviewer_digest = build_digest("reviewer", ledger, char_limit=context_budget)
+    assert len(reviewer_digest) <= context_budget
 
     # Report facts
-    report_facts = build_report_facts(ledger, char_limit=config.context.report_facts)
-    assert len(report_facts) <= config.context.report_facts
+    report_facts = build_report_facts(ledger, char_limit=context_budget)
+    assert len(report_facts) <= context_budget
 
 
 STRUCTURED_PROMPT_SCHEMAS: list[tuple[str, str, Type[BaseModel]]] = [

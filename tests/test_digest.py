@@ -5,16 +5,30 @@ from __future__ import annotations
 import pytest
 from hypothesis import assume, given
 
-from mlagent.digest import DIGEST_CHAR_LIMITS, build_digest, build_report_facts, shorten_text
+from mlagent.digest import build_digest, build_report_facts, shorten_text
 from mlagent.state import Ledger
 from tests.conftest import st_ledger
+
+ALL_AGENTS = (
+    "data_engineer",
+    "data_analyst",
+    "ml_lead",
+    "feature_engineer",
+    "modeler",
+    "evaluator",
+    "tuner",
+    "reviewer",
+    "submitter",
+    "coder",
+)
 
 
 @pytest.mark.unit
 @given(ledger=st_ledger())
 def test_digest_never_exceeds_budget_for_any_agent(ledger: Ledger) -> None:
-    """Digest length never exceeds the agent's character budget on any random ledger."""
-    for agent_name, budget in DIGEST_CHAR_LIMITS.items():
+    """Digest length never exceeds the 16384 character budget on any random ledger."""
+    budget = 16384
+    for agent_name in ALL_AGENTS:
         digest = build_digest(agent_name, ledger, char_limit=budget)
         assert len(digest) <= budget, (
             f"Digest for {agent_name} length {len(digest)} exceeded budget {budget}."
@@ -32,7 +46,7 @@ def test_digest_never_renders_literal_none(ledger: Ledger) -> None:
     assume(not any("None" in r.summary or "None" in r.error for r in ledger.runs))
     assume(not any("None" in f.statement for f in ledger.eda.findings))
 
-    for agent_name in DIGEST_CHAR_LIMITS:
+    for agent_name in ALL_AGENTS:
         digest = build_digest(agent_name, ledger)
         # Avoid literal "None" when formatting fields (should be empty, omitted, or meaningful text)
         assert " None " not in digest, f"Digest for {agent_name} contains unformatted ' None '."
@@ -66,8 +80,8 @@ def test_reviewer_digest_includes_eda_when_available(ledger: Ledger) -> None:
 @given(ledger=st_ledger())
 def test_report_facts_inclusions(ledger: Ledger) -> None:
     """build_report_facts includes the best approved run and high priority findings when available."""
-    facts = build_report_facts(ledger, char_limit=15000)
-    assert len(facts) <= 15000
+    facts = build_report_facts(ledger, char_limit=16384)
+    assert len(facts) <= 16384
     assert " None " not in facts
 
     best = ledger.best_approved_run()

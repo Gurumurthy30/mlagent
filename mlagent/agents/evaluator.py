@@ -7,6 +7,7 @@ Code rules catch hard failures immediately. Otherwise the LLM assesses findings.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
@@ -139,11 +140,22 @@ def hard_check_reasons(
             )
 
     # 3. Leakage flags
-    high_flags = [f for f in checks.leakage_flags if f.severity == "high"]
+    filtered_flags = []
+    for f in checks.leakage_flags:
+        desc_lower = f.description.lower()
+        if ("val_predictions" in desc_lower or "validation predictions" in desc_lower) and ("missing" in desc_lower or "not found" in desc_lower):
+            if run.validation_predictions_path and Path(run.validation_predictions_path).is_file():
+                continue
+        if ("test_predictions" in desc_lower or "test predictions" in desc_lower) and ("missing" in desc_lower or "not found" in desc_lower):
+            if run.test_predictions_path and Path(run.test_predictions_path).is_file():
+                continue
+        filtered_flags.append(f)
+
+    high_flags = [f for f in filtered_flags if f.severity == "high"]
     if high_flags:
         reasons.extend(f"High-severity leakage: {f.description}" for f in high_flags)
 
-    medium_flags = [f for f in checks.leakage_flags if f.severity == "medium"]
+    medium_flags = [f for f in filtered_flags if f.severity == "medium"]
     if len(medium_flags) >= 2:
         reasons.append(f"Multiple medium-severity leakage flags detected ({len(medium_flags)}).")
 
@@ -156,7 +168,7 @@ def hard_check_reasons(
     # 5. Large jump with leakage flag
     if best_approved_run and best_approved_run.score_mean is not None and mean_score is not None:
         jump = (mean_score - best_approved_run.score_mean) if higher_is_better else (best_approved_run.score_mean - mean_score)
-        if jump > jump_std_mult * max(std_score, 1e-6) and checks.leakage_flags:
+        if jump > jump_std_mult * max(std_score, 1e-6) and filtered_flags:
             reasons.append(
                 f"Score jump ({jump:+.4f}) is abnormally large (> {jump_std_mult}x std) while leakage flags are present."
             )
@@ -191,26 +203,31 @@ def run_evaluator(
 
     workspace = agent_context.workspace
     direction = "higher" if higher_is_better else "lower"
+    eval_folder = workspace.evaluation_folder(run.experiment_id)
     task_text = (
         f"Independently check the run {run.experiment_id}.\n"
         f"Run: {run.headline}\n"
         f"Post-processing applied by run: {run.post_processing or 'none'}\n"
         f"Run script: {run.script_path}\n"
-        f"Saved validation predictions: {run.validation_predictions_path}\n"
-        f"Saved test predictions: {run.test_predictions_path}\n"
+        f"Saved validation predictions (ABSOLUTE PATH): {run.validation_predictions_path}\n"
+        f"Saved test predictions (ABSOLUTE PATH): {run.test_predictions_path}\n"
         f"Splits file: {workspace.splits_path}\n"
         f"Primary metric: {ledger.brief.primary_metric} ({direction} is better)\n"
         f"Deliverable format: {ledger.brief.deliverable_format}\n"
         f"Project folder: {workspace.project_folder}\n\n"
+        "CRITICAL FILE PATH WARNING:\n"
+        f"Your check script executes inside '{eval_folder}'. Do NOT look for 'val_predictions.csv' or 'test_predictions.csv' "
+        f"in the current working directory! Always use the exact absolute paths {run.validation_predictions_path} "
+        f"and {run.test_predictions_path} when loading or checking predictions.\n\n"
         "VERIFICATION INSTRUCTIONS:\n"
         "1. RECOMPUTE CV & HOLDOUT SCORES ACCURATELY:\n"
-        "   - Load `val_predictions.csv` and join with ground truth (`from mlagent_tools import load_splits, load_val_preds_with_labels`).\n"
+        f"   - Load validation predictions from '{run.validation_predictions_path}' and join with ground truth (`from mlagent_tools import load_splits, load_val_preds_with_labels`).\n"
         "   - For probability/ranking metrics (`roc_auc`, `pr_auc`, `log_loss`, `brier_score`), compute the metric on each split (`fold >= 0`) using the `proba_*` column(s) (or `prediction` if continuous probabilities are stored there).\n"
         "   - For discrete classification metrics (`accuracy`, `f1`, `f1_macro`, `f1_weighted`, `mcc`, `qwk`) and regression metrics (`rmse`, `rmsle`, `mae`, `r2`), compute the metric on each split (`fold >= 0`) using the `prediction` column.\n"
         "   - Recompute `recomputed_score` (mean across CV folds `fold >= 0`) and `recomputed_holdout_score` (on `fold == -1` if present, else `null`).\n"
         "2. CHECK TEST PREDICTIONS & SUBMISSION INTEGRITY:\n"
-        "   - Inspect `test_predictions.csv`: verify it exists, has zero `NaN`/`Inf` values, has non-zero variance (not constant predictions), and matches the test set row count.\n"
-        "   - If `test_predictions.csv` is missing, has `NaN`s, is constant, or has the wrong row count, append a `{'description': ..., 'severity': 'high'}` entry to `leakage_flags`.\n"
+        f"   - Inspect test predictions at '{run.test_predictions_path}': verify the file exists on disk, has zero `NaN`/`Inf` values, has non-zero variance (not constant predictions), and matches the test set row count.\n"
+        f"   - Only if '{run.test_predictions_path}' does not exist on disk, has `NaN`s, is constant, or has the wrong row count, append a `{{'description': ..., 'severity': 'high'}}` entry to `leakage_flags`.\n"
         "3. AUDIT FOR TRUE DATA LEAKAGE:\n"
         "   - Inspect `run.script_path` and predictions to verify that `fit_preparation` / encoders / target encodings were fit inside each training fold (`train_validation_overlap == 0`) and the target column was not included as an input feature.\n"
         "   - Only flag `severity: 'high'` for genuine leakage, train/val overlap, or corrupted predictions—not for legitimate domain features.\n\n"

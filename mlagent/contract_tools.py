@@ -52,12 +52,21 @@ def load_val_preds_with_labels(
 
     # Align predictions with true labels
     if "example_id" in val_df.columns:
-        example_indices = val_df["example_id"].values
         try:
-            matched_targets = train_df.iloc[example_indices][target_col].values
-            val_df["true_label"] = matched_targets
+            numeric_ids = pd.to_numeric(val_df["example_id"], errors="coerce")
+            if not numeric_ids.isna().any():
+                matched_targets = train_df.iloc[numeric_ids.astype(int).values][target_col].values
+                val_df["true_label"] = matched_targets
+            else:
+                raise ValueError("example_id contains non-numeric values")
         except Exception as err:
-            raise ValueError(f"Failed to map example_id to train rows: {err}") from err
+            common_ids = [c for c in val_df.columns if c in train_df.columns and c != target_col]
+            if common_ids:
+                id_col = common_ids[0]
+                val_df = val_df.merge(train_df[[id_col, target_col]], on=id_col, how="inner")
+                val_df = val_df.rename(columns={target_col: "true_label"})
+            else:
+                raise ValueError(f"Failed to map example_id to train rows: {err}") from err
     else:
         common_ids = [c for c in val_df.columns if c in train_df.columns and c != target_col]
         if common_ids:
@@ -127,12 +136,21 @@ def load_val_preds_with_labels(val_preds_path, train_data_path, target_column=No
         target_col = train_df.columns[-1]
 
     if "example_id" in val_df.columns:
-        example_indices = val_df["example_id"].values
         try:
-            matched_targets = train_df.iloc[example_indices][target_col].values
-            val_df["true_label"] = matched_targets
+            numeric_ids = pd.to_numeric(val_df["example_id"], errors="coerce")
+            if not numeric_ids.isna().any():
+                matched_targets = train_df.iloc[numeric_ids.astype(int).values][target_col].values
+                val_df["true_label"] = matched_targets
+            else:
+                raise ValueError("example_id contains non-numeric values")
         except Exception as err:
-            raise ValueError(f"Failed to map example_id to train rows: {err}") from err
+            common_ids = [c for c in val_df.columns if c in train_df.columns and c != target_col]
+            if common_ids:
+                id_col = common_ids[0]
+                val_df = val_df.merge(train_df[[id_col, target_col]], on=id_col, how="inner")
+                val_df = val_df.rename(columns={target_col: "true_label"})
+            else:
+                raise ValueError(f"Failed to map example_id to train rows: {err}") from err
     else:
         common_ids = [c for c in val_df.columns if c in train_df.columns and c != target_col]
         if common_ids:

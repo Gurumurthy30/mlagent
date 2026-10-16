@@ -53,6 +53,17 @@ class ConsoleUI:
         self._current_agent: str = "Controller"
         self._current_action: str = "starting up"
         self._current_reason: str = ""
+        self.limits: Any | None = None
+        self.model_name: str | None = None
+
+    def set_run_context(self, limits: Any | None = None, model_name: str | None = None) -> None:
+        """Store run limits and model name dynamically from config to display in status and summaries."""
+        with self._lock:
+            self.limits = limits
+            self.model_name = model_name
+            if self._live_status_bar is not None:
+                self._live_status_bar.limits = limits
+                self._live_status_bar.model_name = model_name
 
     def start_live(self) -> None:
         """Start the Rich Live status area (if not in plain mode)."""
@@ -60,7 +71,12 @@ class ConsoleUI:
             return
         import time
         self._start_time = time.monotonic()
-        self._live_status_bar = LiveStatusBar(self.config, self._start_time)
+        self._live_status_bar = LiveStatusBar(
+            self.config,
+            self._start_time,
+            limits=self.limits,
+            model_name=self.model_name,
+        )
         try:
             self._live = Live(
                 self._live_status_bar,

@@ -127,3 +127,46 @@ def test_markdown_config_table_contains_all_model_keys() -> None:
             assert f"`{section_name}`" in table
             assert f"`{field_name}`" in table
 
+
+@pytest.mark.unit
+def test_environment_variable_model_and_base_url_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """OLLAMA_MODEL and OLLAMA_BASE_URL are read when not set in config file."""
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen2.5:32b")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://custom-ollama:11434")
+
+    # 1. No config file
+    cfg_empty = load_config(tmp_path / "nonexistent.yaml")
+    assert cfg_empty.llm.name == "qwen2.5:32b"
+    assert cfg_empty.llm.base_url == "http://custom-ollama:11434"
+
+    # 2. Config file exists without llm section
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("limits:\n  max_eda_loops: 5\n", encoding="utf-8")
+    cfg_with_file = load_config(cfg_file)
+    assert cfg_with_file.llm.name == "qwen2.5:32b"
+    assert cfg_with_file.llm.base_url == "http://custom-ollama:11434"
+    assert cfg_with_file.limits.max_eda_loops == 5
+
+
+@pytest.mark.unit
+def test_llm_context_setting_and_alias(tmp_path: Path) -> None:
+    """llm.context defaults to 16384 and works with either context or context_length key."""
+    cfg = AppConfig()
+    assert cfg.llm.context == 16384
+    assert cfg.llm.context_length == 16384
+
+    # With 'context' key
+    f1 = tmp_path / "c1.yaml"
+    f1.write_text("llm:\n  context: 32768\n", encoding="utf-8")
+    loaded1 = load_config(f1)
+    assert loaded1.llm.context == 32768
+    assert loaded1.llm.context_length == 32768
+
+    # With backward-compatible 'context_length' key
+    f2 = tmp_path / "c2.yaml"
+    f2.write_text("llm:\n  context_length: 65536\n", encoding="utf-8")
+    loaded2 = load_config(f2)
+    assert loaded2.llm.context == 65536
+    assert loaded2.llm.context_length == 65536
+
+

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from hypothesis import given
@@ -165,4 +166,42 @@ def test_write_progress_file(tmp_path: Path) -> None:
     assert ws.progress_path.exists()
     content = ws.progress_path.read_text(encoding="utf-8")
     assert "Round 1 complete." in content
+
+
+@pytest.mark.unit
+def test_archive_existing_normal_rename(tmp_path: Path) -> None:
+    """archive_existing renames the workspace folder to an archive path."""
+    ws = Workspace(tmp_path)
+    ws.create_folders()
+    ws.config_path.write_text("dummy_config: true\n", encoding="utf-8")
+    save_ledger(ws, create_new_ledger("Test task", "acc"))
+
+    archive_path = ws.archive_existing()
+    assert archive_path.exists()
+    assert (archive_path / "config.yaml").exists()
+    assert (archive_path / "memory" / "ledger.json").exists()
+
+
+@pytest.mark.unit
+def test_archive_existing_permission_error_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """When rename raises PermissionError (Windows directory lock), archive_existing copies and clears."""
+    ws = Workspace(tmp_path)
+    ws.create_folders()
+    ws.config_path.write_text("important_old_config: true\n", encoding="utf-8")
+    save_ledger(ws, create_new_ledger("Test task", "acc"))
+
+    # Simulate Windows PermissionError: [WinError 5] Access is denied on rename
+    def mock_rename(self: Any, target: Any) -> None:
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(Path, "rename", mock_rename)
+
+    archive_path = ws.archive_existing()
+    assert archive_path.exists()
+    # Archive has the old files preserved
+    assert (archive_path / "config.yaml").exists()
+    assert (archive_path / "memory" / "ledger.json").exists()
+    # Workspace root has been cleared for the fresh run
+    assert not ws.has_saved_ledger()
+
 

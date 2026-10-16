@@ -326,7 +326,7 @@ def build_pipeline_fake_llm() -> FakeLlmClient:
             done=True,
             next_tasks=[],
         ),
-        "Data Analyst": lambda prompt: (
+        "Data Analyst": lambda prompt, schema=None: (
             SummaryDraft(
                 summary="Clean tabular dataset with 2 continuous features.",
                 issues=[],
@@ -335,7 +335,12 @@ def build_pipeline_fake_llm() -> FakeLlmClient:
                 validation_hints=["stratified_kfold"],
                 model_hints=["lightgbm"],
             )
-            if "summarizing" in prompt.lower()
+            if (
+                schema is SummaryDraft
+                or "closing the exploration" in prompt.lower()
+                or "summarizing" in prompt.lower()
+                or "handover" in prompt.lower()
+            )
             else (
                 ReadDraft(
                     findings=[
@@ -348,7 +353,11 @@ def build_pipeline_fake_llm() -> FakeLlmClient:
                     ],
                     open_questions=[],
                 )
-                if "answered your questions" in prompt.lower()
+                if (
+                    schema is ReadDraft
+                    or "answered your questions" in prompt.lower()
+                    or "reading step" in prompt.lower()
+                )
                 else ThinkDraft(
                     thinking="Initial exploration of data distributions.",
                     open_questions=["Check target balance", "Check missing values"],
@@ -366,7 +375,7 @@ def build_pipeline_fake_llm() -> FakeLlmClient:
             risks=["Overfitting on small dataset"],
             playbook="Start with tree ensemble, test candidate features.",
         ),
-        "Feature Engineer": lambda prompt: (
+        "Feature Engineer": lambda prompt, schema=None: (
             CandidateList(
                 thinking="Propose ratio feature targeting classification error.",
                 candidates=[
@@ -386,7 +395,11 @@ def build_pipeline_fake_llm() -> FakeLlmClient:
                     ),
                 ],
             )
-            if "propose" in prompt.lower()
+            if (
+                schema is CandidateList
+                or "propose" in prompt.lower()
+                or "candidates" in prompt.lower()
+            )
             else FoundationDraft(
                 thinking="Prepare numeric scaling and null handling.",
                 steps=[

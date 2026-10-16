@@ -82,6 +82,32 @@ def make_all_fields_required(schema: dict) -> dict:
     return schema
 
 
+def _extract_model_name(item: Any) -> str:
+    """Extract model name string from an ollama Model object or dictionary."""
+    if hasattr(item, "model") and item.model:
+        return str(item.model)
+    if hasattr(item, "name") and item.name:
+        return str(item.name)
+    if isinstance(item, dict):
+        return str(item.get("model") or item.get("name") or "")
+    return str(item)
+
+
+def _matches_model(installed_name: str, wanted_name: str) -> bool:
+    """Case-insensitive model matcher supporting tags, latest, and base prefix."""
+    inst = installed_name.strip().lower()
+    want = wanted_name.strip().lower()
+    if inst == want:
+        return True
+    want_latest = want if ":" in want else f"{want}:latest"
+    inst_latest = inst if ":" in inst else f"{inst}:latest"
+    if inst_latest == want_latest:
+        return True
+    if ":" not in want and inst.startswith(f"{want}:"):
+        return True
+    return False
+
+
 class LlmClient:
     def __init__(
         self, model_config: ModelConfig, workspace: Workspace, event_bus: EventBus
@@ -94,7 +120,7 @@ class LlmClient:
             model=model_config.name,
             base_url=model_config.base_url,
             temperature=model_config.temperature,
-            num_ctx=model_config.context_length,
+            num_ctx=model_config.context,
             client_kwargs={"timeout": timeout},
         )
 
@@ -118,17 +144,19 @@ class LlmClient:
                 f"Cannot reach Ollama at {base_url}. Start Ollama and run again. ({error})"
             ) from error
 
-        installed_names = {installed.model for installed in installed_models}
-        wanted_name = model_name if ":" in model_name else f"{model_name}:latest"
-        if wanted_name not in installed_names:
+        installed_names = [_extract_model_name(m) for m in installed_models if _extract_model_name(m)]
+        is_matched = any(_matches_model(name, model_name) for name in installed_names)
+        if not is_matched:
             if is_cloud_direct(base_url):
                 raise LlmUnavailableError(
                     f"Model '{model_name}' is not available on Ollama Cloud. The name must "
                     "come from https://ollama.com/api/tags, for example gemma4:31b without "
                     "a -cloud suffix."
                 )
+            avail_str = ", ".join(sorted(installed_names)) if installed_names else "none"
             raise LlmUnavailableError(
-                f"Model '{model_name}' is not pulled in Ollama. Run: ollama pull {model_name}"
+                f"Model '{model_name}' is not pulled in Ollama (installed models: [{avail_str}]). "
+                f"Use --model <name> to select an installed model, or run: ollama pull {model_name}"
             )
 
     def ask_text(self, agent_name: str, prompt: str, system_message: str | None = None) -> str:

@@ -7,11 +7,12 @@ One unified Pydantic AppConfig model is the single source of truth.
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 
 class ConfigError(Exception):
@@ -23,7 +24,7 @@ class LlmConfig(BaseModel):
 
     name: str = Field(
         default="gemma4:31b",
-        description="Ollama model name (e.g. gemma4:31b, qwen2.5:32b)",
+        description="Ollama model name (e.g. gemma4:31b, nemotron-3-ultra:cloud)",
     )
     base_url: str = Field(
         default="https://ollama.com",
@@ -35,12 +36,26 @@ class LlmConfig(BaseModel):
         le=2.0,
         description="Sampling temperature for the LLM",
     )
-    context_length: int = Field(
+    context: int = Field(
         default=16384,
         ge=2048,
         le=131072,
         description="Ollama context window in tokens (num_ctx)",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def handle_context_alias(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "context_length" in data and "context" not in data:
+                data["context"] = data.pop("context_length")
+            elif "context_length" in data:
+                data.pop("context_length")
+        return data
+
+    @property
+    def context_length(self) -> int:
+        return self.context
     request_timeout_seconds: int = Field(
         default=900,
         ge=10,
@@ -88,13 +103,13 @@ class LimitsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_experiment_loops: int = Field(
-        default=8,
+        default=12,
         ge=1,
         le=100,
         description="Maximum rounds of the experiment loop",
     )
     max_eda_loops: int = Field(
-        default=4,
+        default=8,
         ge=1,
         le=20,
         description="Maximum rounds for Data Analyst during EDA",
@@ -136,7 +151,7 @@ class LimitsConfig(BaseModel):
         description="Number of Optuna tuning trials per tuning round",
     )
     candidates_per_feature_round: int = Field(
-        default=15,
+        default=10,
         ge=1,
         le=50,
         description="Maximum candidate feature ideas proposed per round (recommended 10-15)",
@@ -169,44 +184,6 @@ class EvaluationConfig(BaseModel):
         ge=0.1,
         le=10.0,
         description="Score jump threshold (std multiplier) that triggers rejection if leakage flag is set",
-    )
-
-
-class ContextConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    data_engineer: int = Field(
-        default=9500, ge=1000, le=64000, description="Digest character budget for Data Engineer"
-    )
-    data_analyst: int = Field(
-        default=8000, ge=1000, le=64000, description="Digest character budget for Data Analyst"
-    )
-    ml_lead: int = Field(
-        default=7000, ge=1000, le=64000, description="Digest character budget for ML Lead"
-    )
-    feature_engineer: int = Field(
-        default=15000, ge=2000, le=128000, description="Digest character budget for Feature Engineer"
-    )
-    modeler: int = Field(
-        default=9000, ge=1000, le=64000, description="Digest character budget for Modeler"
-    )
-    evaluator: int = Field(
-        default=7000, ge=1000, le=64000, description="Digest character budget for Evaluator"
-    )
-    tuner: int = Field(
-        default=7000, ge=1000, le=64000, description="Digest character budget for Tuner"
-    )
-    reviewer: int = Field(
-        default=9000, ge=1000, le=64000, description="Digest character budget for Reviewer"
-    )
-    submitter: int = Field(
-        default=6000, ge=1000, le=64000, description="Digest character budget for Submitter"
-    )
-    coder: int = Field(
-        default=9000, ge=1000, le=64000, description="Digest character budget for Coder"
-    )
-    report_facts: int = Field(
-        default=15000, ge=2000, le=128000, description="Context character budget for final report facts"
     )
 
 
@@ -307,7 +284,6 @@ class AppConfig(BaseModel):
     compute: ComputeConfig = Field(default_factory=ComputeConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
-    context: ContextConfig = Field(default_factory=ContextConfig)
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     machine: MachineConfig = Field(default_factory=MachineConfig)
     report: ReportConfig = Field(default_factory=ReportConfig)
@@ -318,7 +294,6 @@ class AppConfig(BaseModel):
         "compute",
         "limits",
         "evaluation",
-        "context",
         "workspace",
         "machine",
         "report",
@@ -337,7 +312,7 @@ class AppConfig(BaseModel):
 BASIC_KEYS = {
     ("llm", "name"),
     ("llm", "base_url"),
-    ("llm", "context_length"),
+    ("llm", "context"),
     ("compute", "use_gpu"),
     ("limits", "max_experiment_loops"),
     ("limits", "max_eda_loops"),
@@ -447,6 +422,17 @@ def load_config(
     if overrides:
         raw_dict = apply_overrides(raw_dict, overrides)
 
+    # Fallback to environment variables if not specified in config or overrides
+    if "llm" not in raw_dict or not isinstance(raw_dict["llm"], dict):
+        raw_dict["llm"] = {}
+    if "name" not in raw_dict["llm"] and os.environ.get("OLLAMA_MODEL"):
+        raw_dict["llm"]["name"] = os.environ["OLLAMA_MODEL"].strip()
+    if "base_url" not in raw_dict["llm"]:
+        env_base = os.environ.get("OLLAMA_BASE_URL") or os.environ.get("OLLAMA_HOST")
+        if env_base:
+            raw_dict["llm"]["base_url"] = env_base.strip()
+    raw_dict.pop("context", None)
+
     try:
         return AppConfig.model_validate(raw_dict)
     except ValidationError as err:
@@ -509,6 +495,18 @@ def get_effective_config_details(
                 and field_name in raw_file_dict[section_name]
             ):
                 source = "file"
+            elif (
+                section_name == "llm"
+                and field_name == "name"
+                and os.environ.get("OLLAMA_MODEL")
+            ):
+                source = "env"
+            elif (
+                section_name == "llm"
+                and field_name == "base_url"
+                and (os.environ.get("OLLAMA_BASE_URL") or os.environ.get("OLLAMA_HOST"))
+            ):
+                source = "env"
             else:
                 source = "default"
             details.append(

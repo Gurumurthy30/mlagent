@@ -210,8 +210,7 @@ def run_report(ledger: Ledger, agent_context: AgentContext) -> tuple[str, str]:
     event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, "writing final report")
 
     max_words = agent_context.config.report.max_words
-    facts_budget = agent_context.config.context.report_facts
-    facts = build_report_facts(ledger, char_limit=facts_budget)
+    facts = build_report_facts(ledger, char_limit=agent_context.config.llm.context)
     prompt = REPORT_PROMPT.format(max_words=max_words, facts=facts)
     report_markdown = agent_context.llm_client.ask_text(AGENT_NAME, prompt)
 

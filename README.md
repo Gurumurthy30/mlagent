@@ -238,7 +238,7 @@ Your source data and files are strictly read-only and never modified.
 | `llm` | `name` | `gemma4:31b` | basic | Ollama model name (e.g. gemma4:31b, qwen2.5:32b) |
 | `llm` | `base_url` | `https://ollama.com` | basic | Ollama server host address |
 | `llm` | `temperature` | `0.2` | advanced | Sampling temperature for the LLM |
-| `llm` | `context_length` | `16384` | basic | Ollama context window in tokens (num_ctx) |
+| `llm` | `context` | `16384` | basic | Ollama context window in tokens (num_ctx) |
 | `llm` | `request_timeout_seconds` | `900` | advanced | HTTP request timeout for LLM calls in seconds |
 | `llm` | `retries` | `2` | advanced | Maximum retries for JSON schema repair attempts |
 | `compute` | `use_gpu` | `auto` | basic | GPU utilization mode: auto (ML Lead decides per task), always, or never |
@@ -255,17 +255,6 @@ Your source data and files are strictly read-only and never modified.
 | `evaluation` | `holdout_gap_std_multiplier` | `4.0` | advanced | Multiplier of CV standard deviation allowed for holdout score drop |
 | `evaluation` | `holdout_gap_relative_limit` | `0.08` | advanced | Maximum relative drop allowed on holdout score before flagging |
 | `evaluation` | `large_score_jump_std_multiplier` | `4.0` | advanced | Score jump threshold (std multiplier) that triggers rejection if leakage flag is set |
-| `context` | `data_engineer` | `9500` | advanced | Digest character budget for Data Engineer |
-| `context` | `data_analyst` | `8000` | advanced | Digest character budget for Data Analyst |
-| `context` | `ml_lead` | `7000` | advanced | Digest character budget for ML Lead |
-| `context` | `feature_engineer` | `15000` | advanced | Digest character budget for Feature Engineer |
-| `context` | `modeler` | `9000` | advanced | Digest character budget for Modeler |
-| `context` | `evaluator` | `7000` | advanced | Digest character budget for Evaluator |
-| `context` | `tuner` | `7000` | advanced | Digest character budget for Tuner |
-| `context` | `reviewer` | `9000` | advanced | Digest character budget for Reviewer |
-| `context` | `submitter` | `6000` | advanced | Digest character budget for Submitter |
-| `context` | `coder` | `9000` | advanced | Digest character budget for Coder |
-| `context` | `report_facts` | `15000` | advanced | Context character budget for final report facts |
 | `workspace` | `workspace_folder_name` | `mlagent_workspace` | basic | Folder name inside the project directory used for artifacts and memory |
 | `workspace` | `archived_workspace_prefix` | `mlagent_workspace_old_` | advanced | Prefix for archived previous workspace runs |
 | `workspace` | `big_file_mb` | `200` | advanced | File size in megabytes above which files are flagged as large |

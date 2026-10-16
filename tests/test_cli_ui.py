@@ -328,3 +328,94 @@ def test_live_status_bar_updates_from_ledger() -> None:
     assert "Modeler" in now_line.plain
     assert "seeking higher accuracy" in now_line.plain
     assert "Scoreboard" in score_line.plain
+
+
+@pytest.mark.unit
+def test_flags_to_overrides_with_model_flag() -> None:
+    """CLI --model flag maps to llm.name override."""
+    args = argparse.Namespace(
+        model="qwen2.5:32b",
+        overrides=[],
+    )
+    ov = flags_to_overrides(args)
+    assert "llm.name=qwen2.5:32b" in ov
+
+
+@pytest.mark.unit
+def test_live_status_bar_uses_configured_limits_and_model() -> None:
+    """LiveStatusBar dynamically displays max_loops from limits config and model name."""
+    import time
+    from mlagent.config import LimitsConfig
+
+    start_time = time.monotonic() - 10.0
+    cfg = UiConfig(theme="dark")
+    limits = LimitsConfig(max_experiment_loops=25)
+    status_bar = LiveStatusBar(cfg, start_time, limits=limits, model_name="qwen2.5:32b")
+
+    ledger = Ledger(user_task="Test task", phase="experiment_loop", iteration=3)
+    status_bar.ledger = ledger
+
+    console = Console(record=True, width=120)
+    lines = list(status_bar.__rich_console__(console, None))  # type: ignore[arg-type]
+    stage_line = lines[0].plain
+    score_line = lines[2].plain
+
+    # Must reflect round 4/25 dynamically from limits, not a hardcoded 15
+    assert "round 4/25" in stage_line
+    assert "qwen2.5:32b" in score_line
+
+
+@pytest.mark.unit
+def test_confirmation_panel_displays_model_and_server() -> None:
+    """Confirmation panel displays configured model, server url, and dynamic limits."""
+    from mlagent.config import LimitsConfig
+
+    cfg = UiConfig(theme="dark")
+    limits = LimitsConfig(max_experiment_loops=18, max_eda_loops=6)
+    panel = render_confirmation_panel(
+        task="predict survival",
+        metrics="f1",
+        data_folder=Path("."),
+        limits=limits,
+        workspace_folder=Path("mlagent_workspace"),
+        model_name="deepseek-r1:32b",
+        config=cfg,
+        base_url="http://127.0.0.1:11434",
+    )
+    console = Console(record=True, width=100)
+    console.print(panel)
+    output = console.export_text()
+
+    assert "deepseek-r1:32b" in output
+    assert "18 experiment rounds" in output
+    assert "EDA cap: 6" in output
+    assert "http://127.0.0.1:11434" in output
+
+
+@pytest.mark.unit
+def test_summary_panel_escapes_bracketed_markup() -> None:
+    """Findings or task text with literal square brackets do not break markup parsing."""
+    from mlagent.state import EdaReport, Finding
+
+    cfg = UiConfig(theme="dark")
+    ledger = Ledger(
+        user_task="Predict [status] on [train.csv]",
+        status="done",
+        eda=EdaReport(
+            summary="Analyzed [Cabin] column with [deck, num, side] splits",
+            findings=[
+                Finding(
+                    priority="high",
+                    statement="Feature [CryoSleep] has [99%] predictive correlation",
+                )
+            ],
+        ),
+    )
+    panel = render_summary_panel(ledger, cfg)
+    console = Console(record=True, width=100)
+    console.print(panel)
+    output = console.export_text()
+    assert "Predict [status]" in output
+    assert "[deck, num, side]" in output
+    assert "[CryoSleep]" in output
+

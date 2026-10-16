@@ -10,18 +10,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mlagent.state import FeatureRecord, Ledger
 
-DIGEST_CHAR_LIMITS: dict[str, int] = {
-    "data_engineer": 9500,
-    "data_analyst": 8000,
-    "ml_lead": 7000,
-    "feature_engineer": 15000,
-    "modeler": 9000,
-    "evaluator": 7000,
-    "tuner": 7000,
-    "reviewer": 9000,
-    "submitter": 6000,
-    "coder": 9000,
-}
 
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
@@ -259,9 +247,9 @@ def build_history_items(ledger: Ledger) -> list[str]:
     return items
 
 
-def build_digest(agent_name: str, ledger: Ledger, char_limit: int | None = None) -> str:
+def build_digest(agent_name: str, ledger: Ledger, char_limit: int = 16384) -> str:
     """Build the prompt digest for a specific agent."""
-    limit = char_limit if char_limit is not None else DIGEST_CHAR_LIMITS.get(agent_name, 6000)
+    limit = char_limit
 
     budget_items = [
         f"BUDGET: Round {ledger.iteration} | script time limit 20 min | EDA rounds {ledger.eda.eda_loops_used}"
@@ -353,8 +341,8 @@ def build_digest(agent_name: str, ledger: Ledger, char_limit: int | None = None)
     return assemble_sections(sections, limit)
 
 
-def build_report_facts(ledger: Ledger, char_limit: int | None = None) -> str:
-    """Build the comprehensive facts document for the final report (~14,000 chars).
+def build_report_facts(ledger: Ledger, char_limit: int = 16384) -> str:
+    """Build the comprehensive facts document for the final report (~16,384 chars).
 
     Priority order:
     1. final result and best run
@@ -367,7 +355,7 @@ def build_report_facts(ledger: Ledger, char_limit: int | None = None) -> str:
     8. medium findings
     9. runs table
     """
-    total_budget = char_limit if char_limit is not None else 15000
+    total_budget = char_limit
     best_run = ledger.best_approved_run()
 
     # 1. Final result and best run
