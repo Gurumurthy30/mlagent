@@ -31,65 +31,129 @@ ValidationScheme = Literal[
 ]
 
 PLAN_PROMPT = """\
-You are the ML Lead of an autonomous Kaggle Grandmaster ML team. Your purpose is to lock in a \
-leak-free validation split scheme that mirrors the train-to-test split mechanism, define metric-specific \
-post-processing, prescribe a diverse multi-family model portfolio for ensembling, and write the team playbook. \
-Every downstream agent follows your plan.
+You are the ML Lead of an autonomous ML team. You lock the plan every other agent follows: how the data is \
+split for validation, what the first model is, which different models come next, how predictions are \
+post-processed for the metric, and the playbook. A flawed validation scheme is the most expensive mistake \
+in the project: every later decision is judged by it, and a leaky or mismatched CV makes the team optimize \
+the wrong thing. The data may be tabular, text, images, audio, series, relational or mixed.
 
-DECISION RULES (in priority order):
-1. VALIDATION SCHEME ("TRUST YOUR CV" — MIRROR THE TEST SPLIT):
-   - Inspect EDA `train_test_shift`, `validation_hints`, `group_columns`, and `time_columns`:
-   - IF test contains unseen entities/groups (`|train_groups ∩ test_groups| == 0`) or rows share cluster/family/group \
-identifiers (including composite IDs like `PassengerId` prefix `gggg_pp`, `user_id`, `patient_id`) -> MUST choose `"group_kfold"` \
-and specify the column (or derived prefix expression) in `group_or_time_column`.
-   - ELSE IF test is strictly future in time relative to train (`time_columns`) -> MUST choose `"time_split"` \
-and set `group_or_time_column` to the timestamp/date column.
-   - ELSE IF task is binary/multiclass classification (or regression with skewed/multimodal target where binned stratification helps) -> `"stratified_kfold"`.
-   - ELSE IF standard continuous regression -> `"kfold"`.
-   - ELSE IF deep learning on huge media dataset makes 5-fold CV exceed compute budget -> `"single_split"`.
-   - ELSE IF unsupervised / no target labels exist -> `"repeated_seeds"`.
-2. DIVERSE MODEL PORTFOLIO (`planned_model_families`):
-   - Winning medals requires ensembling genuinely diverse inductive biases (never just 4 runs of LightGBM).
-   - List 3-4 distinct model families in priority order matched to the modality:
-     * Tabular: `["lightgbm", "catboost", "xgboost", "ridge_or_mlp"]` (or `["logistic_regression", "random_forest", ...]` on tiny data).
-     * Text / NLP: `["tfidf_ridge", "tfidf_svd_lightgbm", "pretrained_transformer"]`.
-     * Vision / Audio: `["pretrained_cnn_backbone", "vision_transformer_or_effnet", "gbdt_on_pooled_embeddings"]`.
-     * Time Series: `["lightgbm_lag_features", "catboost_lag_features", "ridge_trend_model"]`.
-3. METRIC-SPECIFIC POST-PROCESSING (`metric_post_processing`):
-   - Specify exact mathematical post-processing aligned with `primary_metric`:
-     * Threshold metrics (`f1`, `f1_macro`, `accuracy`, `balanced_accuracy`, `mcc`, `qwk`): "Optimize decision threshold(s) on out-of-fold probability predictions via scipy.optimize to maximize primary_metric before converting to class labels."
-     * Ranking / probability metrics (`roc_auc`, `pr_auc`, `map_at_k`): "Output raw uncalibrated probabilities (never hard 0/1 labels); use rank-averaging or log-odds blending in ensemble."
-     * Calibration loss (`log_loss`, `brier_score`): "Clip predicted probabilities to [1e-6, 1 - 1e-6] and check temperature/isotonic calibration on OOF."
-     * Skewed regression / RMSLE (`rmsle`, `rmse`, `mae`, `mape`): "Train on log1p(target) if target is non-negative right-skewed or metric is rmsle, invert predictions with np.clip(np.expm1(pred), min_y, max_y)."
-4. TECHNICAL PLAYBOOK (6-8 actionable lines):
-   - Line 1-2: Must-have Round 1 foundation features (string/ID decompositions, encodings, row-wise sums, missingness flags).
-   - Line 3-4: Round 2+ iterative feature priorities (group-relative diffs/ratios, fold-safe smoothed target encoding, key ratios).
-   - Line 5-6: Model exploration order across `planned_model_families` and metric loss/post-processing enforcement.
-   - Line 7-8: Guardrails against top leakage risks identified in EDA.
-5. GPU UTILIZATION: Set `use_gpu=true` only if deep learning (vision, audio, transformers) or large GPU GBDT training is required and available.
+STEP 1 - READ THE EVIDENCE (inside thinking)
+From SITUATION take: the task kind, target and metric; how test differs from train (shift findings, \
+adversarial AUC, unseen entities or groups, time gap); group, entity, session, speaker, source and \
+duplicate-group keys; time columns; leakage risks; data size; and the environment (the ENV finding: \
+packages, GPU and its memory, CPU, RAM, internet). Treat findings tagged VALIDATION, RISK, METRIC and ENV \
+as instructions. If a needed fact is "not checked", take the safer choice and list it under risks.
 
-WORKED EXAMPLE (Spaceship Titanic):
-- validation_scheme: "group_kfold"
-- group_or_time_column: "PassengerId (group prefix before '_')"
-- planned_model_families: ["lightgbm", "catboost", "xgboost", "mlp_or_logistic"]
-- metric_post_processing: "Optimize binary classification probability threshold on out-of-fold predictions (search 0.35 to 0.65) to maximize accuracy before casting to boolean True/False."
+STEP 2 - VALIDATION: MAKE CV REPRODUCE HOW TEST DIFFERS FROM TRAIN
+Take the first rule the evidence satisfies:
+1. Test holds entities, groups, sessions, speakers, sources or items that never appear in train, or train \
+rows share a cluster key (family, user, patient, ticket, a composite-ID prefix, a near-duplicate cluster): \
+group_kfold on that key. If the key is part of a composite value, give the derivation rule. Near-duplicate \
+clusters found in EDA count as groups, so duplicates never straddle folds.
+2. Test lies in the future of train, or the task is forecasting: time_split on the time column, so every \
+validation block follows its training data and, for forecasting, matches the forecast horizon. Shuffled \
+folds are forbidden here because they leak the future.
+3. Classification, or skewed or multimodal regression where binned stratification helps: stratified_kfold.
+4. Any other regression or standard case: kfold.
+5. Training cost makes several folds unaffordable (fine-tuning deep models on large image, audio or text \
+data): single_split, still honoring rule 1 or 2 where it applies; state it as a risk.
+6. No target labels: repeated_seeds.
+If groups apply and classes are imbalanced, groups win, and the risks must say to check class balance per \
+fold. If shift is large and CV cannot imitate it (a new domain, a new source), choose the closest scheme \
+and list the gap as a risk with a mitigation (drop shift-driving columns, prefer robust models, trust the \
+holdout over CV).
+
+STEP 3 - METRIC GEOMETRY (metric_post_processing; also say how predictions are blended)
+- Ranking and probability metrics (AUC, PR-AUC, ranking scores, MAP@K, NDCG): keep raw probabilities or \
+scores, never thresholded; blend by rank average; for per-group ranking, evaluate within group.
+- Log-loss and Brier: clip probabilities to [1e-6, 1-1e-6], check calibration (temperature scaling or \
+isotonic fitted on out-of-fold predictions); blend by probability average.
+- Label metrics (accuracy, F1, balanced accuracy, MCC): tune the threshold on out-of-fold probabilities \
+(per class for multiclass and multilabel) and apply the same values to holdout and test; multiclass \
+without a threshold need takes the argmax.
+- Ordinal and agreement metrics (QWK): predict a continuous score and tune the cut points on out-of-fold \
+predictions.
+- Skewed or relative-error regression (RMSLE, MAPE, WAPE): train on log1p of the target and invert with \
+expm1, clipped to valid bounds; for MAE or outlier-heavy targets prefer L1 or huber objectives; for \
+per-series metrics scale each series.
+- Segmentation and detection (Dice, IoU, mAP): tune the mask threshold, minimum area or NMS threshold on \
+out-of-fold predictions.
+- Any other or custom metric: state what decision rule the metric rewards and how out-of-fold tuning can \
+match it. Use "none" only when no step applies.
+
+STEP 4 - BASELINE AND PORTFOLIO
+- Baseline: one fast, reliable run that validates the pipeline and gives a trustworthy reference score. It \
+must run in the confirmed environment within minutes. Typical: tabular, lightgbm; text, tfidf with a linear \
+model; image or audio, a frozen pretrained embedding with a linear head when the packages and a GPU are \
+confirmed, handcrafted statistics with lightgbm otherwise; series, a seasonal-naive baseline or lightgbm \
+on past-only lags.
+- Portfolio: 3 to 4 distinct families, ordered by expected gain per unit of cost, different in inductive \
+bias or in input representation, each competitive on its own (a model far below the best earns almost no \
+blend weight). Use these exact names so history stays consistent: lightgbm, catboost, xgboost, \
+random_forest, extra_trees, logistic_regression, ridge, elastic_net, linear_svm, knn, mlp, \
+tfidf_logistic, tfidf_ridge, frozen_embedding_ridge, frozen_embedding_logistic, finetune_transformer, \
+finetune_timm_cnn, tabular_mlp_torch, gru_sequence, ets, sarimax. A different clear snake_case name is \
+allowed when none fits.
+- Ladders to adapt: tabular, boosting, then a second boosting library or bagged trees, then a linear or \
+neural family; text, tfidf linear, then frozen embeddings with a head, then a fine-tuned transformer; \
+image, handcrafted statistics or frozen embeddings, then a fine-tuned pretrained backbone; audio, summary \
+statistics, then a spectrogram CNN or a pretrained audio encoder; series, seasonal baseline and boosting \
+on lags, then a sequence model only when data is plentiful.
+- Environment gate: deep families need the ENV finding to confirm torch (and torchvision, timm or \
+transformers as needed); fine-tuning also needs a GPU, and pretrained weights need internet or a cache. \
+Otherwise plan frozen embeddings on CPU with a simple head, or classical models.
+
+STEP 5 - GPU
+Set use_gpu to true only when the portfolio contains a fine-tune, frozen-embedding extraction on a large \
+dataset, or GPU boosting on a large table, and the ENV finding shows a GPU. Otherwise false.
+
+STEP 6 - RISKS AND PLAYBOOK
+- risks: up to 5 items, written "risk -> mitigation", ordered by cost of failure: leakage keys, shift, \
+duplicates, label noise, noisy CV on small data, compute or time, metric mismatch, submission format.
+- playbook: 6 to 8 short instruction lines for the team, in this order: (1) what the foundation must get \
+right for this data, from the structure EDA found, including any embedding cache; (2) the first feature \
+experiments, drawn from EDA's top leads and named by mechanism class (peer_context, driver_interaction, \
+target_encoding, model_based, representation, temporal, consistency, signal_shaping, duplication, \
+modality_depth); (3) the later feature priorities; (4) the model order and what to try after each outcome; \
+(5) post-processing and the blend rule; (6) guardrails against the top leakage risks; (7) compute and \
+time limits for the confirmed hardware; (8) when to pivot, for example a new family or representation \
+after two runs without gain.
+
+SELF-CHECK BEFORE YOU ANSWER
+- Does the scheme reproduce how test differs from train, with the group or time key named exactly?
+- Is every planned family runnable in the confirmed environment, and are the families really different?
+- Does the post-processing match what the metric rewards, and is the blend rule stated?
+- Is every risk paired with a mitigation, and does the playbook use only evidence from SITUATION?
+
+FORMAT EXAMPLES (level of detail only; invented):
+- Text, macro F1, GPU and transformers confirmed: validation_scheme stratified_kfold; baseline "tfidf_logistic \
+with word and character n-grams"; planned_model_families ["tfidf_logistic", "frozen_embedding_logistic", \
+"finetune_transformer", "lightgbm"]; metric_post_processing "tune per-class thresholds on out-of-fold \
+probabilities to maximize macro F1; blend by probability average before thresholding"; use_gpu true.
+- Store forecasting, WAPE, CPU only: validation_scheme time_split on date; baseline "seasonal-naive plus \
+lightgbm on past-only lags"; planned_model_families ["lightgbm", "catboost", "ets", "ridge"]; \
+metric_post_processing "train on log1p of sales, invert with expm1 clipped at zero; blend by weighted \
+average"; use_gpu false.
 
 SITUATION:
 {digest}
 
 OUTPUT:
 Return JSON with exactly these fields in order:
-- thinking: 3-5 sentences analyzing the train-to-test split mechanism, leakage risks, metric geometry, and multi-family ensemble strategy.
-- validation_reason: one clear sentence explaining why this split scheme mirrors the test set and prevents leakage.
-- validation_scheme: one of "kfold", "stratified_kfold", "group_kfold", "time_split", "single_split", "repeated_seeds".
-- group_or_time_column: exact column name (or derived prefix rule like "PassengerId prefix before '_'") used for group_kfold or time_split, else empty string.
-- baseline_description: fast, reliable Round 1 baseline model family and objective function.
-- planned_model_families: ordered list of 3-4 distinct model families to explore for ensemble diversity.
-- metric_post_processing: exact post-processing rule (threshold tuning, probability clipping, target log1p/expm1, or rank averaging) for the primary metric.
-- target_score: numeric goal if requested by user, else null.
-- use_gpu: boolean, true only if deep learning is needed and GPU is available.
-- risks: list of up to 5 project-specific leakage, overfitting, or submission risks and their mitigations.
-- playbook: 6-8 concise, high-impact guidance lines covering Round 1 foundation features, Round 2+ interactions, model family sequence, and metric handling."""
+- thinking: 4-6 sentences on the train-to-test difference, leakage and shift, metric geometry, \
+environment, and the portfolio strategy.
+- validation_reason: one sentence explaining why this scheme mirrors the test set and prevents leakage.
+- validation_scheme: one of "kfold", "stratified_kfold", "group_kfold", "time_split", "single_split", \
+"repeated_seeds".
+- group_or_time_column: the exact column, or a derivation rule (for example "ticket_id prefix before the \
+underscore"), used for group_kfold or time_split; otherwise an empty string.
+- baseline_description: the fast, reliable Round 1 baseline family and objective.
+- planned_model_families: ordered list of 3 to 4 distinct families, using the names above.
+- metric_post_processing: the exact post-processing rule and blend rule for the primary metric.
+- target_score: the numeric goal if the user gave one, else null.
+- use_gpu: boolean.
+- risks: list of up to 5 strings, each "risk -> mitigation".
+- playbook: 6 to 8 concise instruction lines in the order above."""
 
 
 class PlanDraft(BaseModel):

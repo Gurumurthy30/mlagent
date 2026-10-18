@@ -32,6 +32,8 @@ dependencies = [
     "pyarrow>=17",
     "statsmodels>=0.14",
     "pillow>=11",
+    "spacy",
+    "nltk",
 ]
 
 [project.optional-dependencies]

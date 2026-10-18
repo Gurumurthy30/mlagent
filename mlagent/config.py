@@ -24,7 +24,7 @@ class LlmConfig(BaseModel):
 
     name: str = Field(
         default="gemma4:31b",
-        description="Ollama model name (e.g. gemma4:31b, nemotron-3-ultra:cloud)",
+        description="Ollama model name (e.g. gemma4:31b, nemotron-3-super)",
     )
     base_url: str = Field(
         default="https://ollama.com",

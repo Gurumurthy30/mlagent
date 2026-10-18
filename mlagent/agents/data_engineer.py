@@ -63,6 +63,8 @@ INSPECTION ROUND {round_number} OF {max_rounds}. The inspection script found:
 {facts_text}
 
 RULES
+- You can do as much questions as you want. and try to complete within in {max_rounds} because \
+we have this much rounds only. so, do different numerical test to understand dataset better.
 - Use only these facts and the user's words. Never guess: leave the field empty and add the \
 question to open_questions.
 - Copy every field that did not change from BRIEF SO FAR exactly, so nothing is lost.
