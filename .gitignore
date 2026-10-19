@@ -16,9 +16,6 @@ wheels/
 
 # Virtual environments
 .venv/
-venv/
-env/
-ENV/
 
 # Environment / secrets
 .env
@@ -27,9 +24,8 @@ ENV/
 !.env.example
 
 # Other things
-.hypothesis/
 docs/
 .ruff_cache/
-mlagent_workspace*/
-reference/
-NOTES/
+state_v3.py
+workflow_plan.md
+GEMINI.md

@@ -12,12 +12,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from mlagent.code_runner import CodeRunner
-    from mlagent.config import AppConfig
-    from mlagent.environment_probe import EnvironmentInfo
-    from mlagent.events import EventBus
-    from mlagent.llm_client import LlmClient
-    from mlagent.memory import Workspace
+    from mlagent.configs.config import AppConfig
+    from mlagent.helper.code_runner import CodeRunner
+    from mlagent.helper.environment_probe import EnvironmentInfo
+    from mlagent.helper.events import EventBus
+    from mlagent.helper.llm_client import LlmClient
+    from mlagent.helper.workspace import Workspace
 
 
 class AgentFailedError(Exception):

@@ -9,17 +9,29 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from mlagent.graph.state import Ledger
+
+# Base agent context and data structures
 from mlagent.agents.base import AgentContext
-from mlagent.code_runner import extract_tagged_json, keep_end_of_text
-from mlagent.digest import build_digest
-from mlagent.events import EventType
-from mlagent.settings import (
+
+# Core execution constants
+from mlagent.configs.settings import (
     MAX_ERROR_TEXT_CHARS,
     MAX_LIBRARY_LOOKUPS,
     RANDOM_SEED,
 )
-from mlagent.state import Ledger
+
+# Subprocess and output extraction helpers
+from mlagent.helper.code_runner import extract_tagged_json, keep_end_of_text
+
+# Event notification types
+from mlagent.helper.events import EventType
+
+# Prompt template
+from mlagent.prompts.coder import CODER_PROMPT
 
 AGENT_KEY = "coder"
 AGENT_NAME = "Coder"
@@ -30,69 +42,69 @@ LOOKUP_LANGUAGE = "lookup"
 
 CODE_BLOCK_PATTERN = re.compile(r"```([A-Za-z0-9_+-]*)[ \t]*\r?\n(.*?)```", re.DOTALL)
 LIBRARY_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
-LIBRARY_LOOKUP_MODULE = "mlagent.library_lookup"
+LIBRARY_LOOKUP_MODULE = "mlagent.helper.library_lookup"
 OUTPUT_END_CHARS_FOR_MODEL = 1500
 
-CODER_PROMPT = """\
-You are the Coder, a principal competitive ML engineer implementing production-grade Python scripts \
-for the autonomous ML team. You receive a task and write ONE complete, self-contained Python script.
 
-RESPONSE FORMAT:
-1. Optional ```{shell_name} block: shell commands (e.g. `python -m pip install <pkg>`) ONLY if a library is missing.
-2. Optional ```lookup block: dotted names to inspect docstrings ({lookups_left} lookups left).
-3. Exactly ONE ```python block containing the complete runnable script:
-```python
-import os, sys, json, time, random, warnings
-warnings.filterwarnings("ignore")
-import numpy as np
-import pandas as pd
-# from mlagent_tools import load_splits, load_val_preds_with_labels
+def build_coder_digest(ledger: Ledger) -> str:
+    # Build clean execution summary for Coder context
+    champ = ledger.champion_run()
+    task_family = (
+        ledger.brief.task_family
+        if ledger.brief and ledger.brief.task_family
+        else (ledger.scope.task_family if ledger.scope else "unknown")
+    )
+    primary_metric = (
+        ledger.brief.primary_metric
+        if ledger.brief and ledger.brief.primary_metric
+        else (ledger.scope.primary_metric if ledger.scope else "unknown")
+    )
+    champ_score = f"{champ.cv_mean:.4f}" if champ and champ.cv_mean is not None else "None"
+    champ_model = champ.model_family if champ and champ.model_family else "None"
 
-def main():
-    start_time = time.time()
-    np.random.seed({random_seed})
-    random.seed({random_seed})
+    lines = [
+        f"Task Family: {task_family}",
+        f"Primary Metric: {primary_metric}",
+        f"Champion Score: {champ_score}",
+        f"Champion Model: {champ_model}",
+        f"Active Feature Version: {ledger.active_base_feature_version()}",
+    ]
+    return "\n".join(lines)
 
-    # Execute task with fold-isolation and pre-flight assertions...
 
-    result = {{"key": "value"}}  # convert all numpy scalars to native float/int!
-    print(f"<{result_tag}>{{json.dumps(result)}}</{result_tag}>")
+def extract_dataset_columns(ledger: Ledger, project_folder: Path) -> str:
+    """Extract list of actual dataset columns for Coder prompt context."""
+    # 1. Check known tabular files in project data folder first for authentic column names
+    if project_folder.exists():
+        for candidate in ["train.csv", "train.parquet", "data.csv"]:
+            p = project_folder / candidate
+            if p.exists():
+                try:
+                    if p.suffix == ".csv":
+                        import pandas as pd
+                        df = pd.read_csv(p, nrows=2)
+                        return ", ".join(list(df.columns)[:80])
+                    elif p.suffix == ".parquet":
+                        import pandas as pd
+                        df = pd.read_parquet(p)
+                        return ", ".join(list(df.columns)[:80])
+                except Exception:
+                    pass
+        for p in project_folder.glob("*.csv"):
+            try:
+                import pandas as pd
+                df = pd.read_csv(p, nrows=2)
+                return ", ".join(list(df.columns)[:80])
+            except Exception:
+                pass
 
-if __name__ == "__main__":
-    main()
-```
+    # 2. Fallback to eda.column_preprocessing_plan if files could not be read
+    if ledger.eda and ledger.eda.column_preprocessing_plan:
+        cols = [spec.column_name for spec in ledger.eda.column_preprocessing_plan]
+        if cols:
+            return ", ".join(cols[:80])
 
-CRASH-FREE COMPETITIVE ML CODING IDIOMS (follow strictly):
-1. VERSION-SAFE GBDT APIS (do not pass deprecated `verbose` or `early_stopping_rounds` kwargs to `.fit()` in LightGBM):
-   - LightGBM: `model = lgb.LGBMClassifier(**params, random_state={random_seed}, verbosity=-1, n_jobs=-1)` and `model.fit(X_tr, y_tr, eval_set=[(X_va, y_va)], callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)])`.
-   - CatBoost: `model = cb.CatBoostClassifier(**params, random_seed={random_seed}, verbose=0, allow_writing_files=False)` and `model.fit(X_tr, y_tr, eval_set=(X_va, y_va), early_stopping_rounds=50, verbose=False)`.
-   - XGBoost: `model = xgb.XGBClassifier(**params, random_state={random_seed}, early_stopping_rounds=50, n_jobs=-1, verbosity=0)` and `model.fit(X_tr, y_tr, eval_set=[(X_va, y_va)], verbose=False)`.
-2. SAFE MATH, DATAFRAME INDEXING & FOLD ISOLATION:
-   - Always call `.reset_index(drop=True)` when slicing fold DataFrames (`train_fold`, `val_fold`) before assigning derived columns or concatenating arrays, while keeping `example_id` aligned with `splits.json`.
-   - Guard all divisions with `np.where(np.abs(denom) > 1e-9, num / denom, 0.0)` and sanitize matrices with `df.replace([np.inf, -np.inf], np.nan).fillna(0.0)`.
-   - Never fit encoders, imputers, target encodings, or `fit_preparation` on full data before splitting; always fit on `train_fold` and apply to `val_fold` and `test`.
-3. PRE-FLIGHT SELF-VERIFICATION ASSERTIONS (run before printing `<{result_tag}>`):
-   - Cast all numbers in `result` dict to native Python `float(x)` / `int(x)` (never `np.float32`, `np.int64`, `NaN`, or `Inf`).
-   - When writing `val_predictions.csv` and `test_predictions.csv` in `{working_folder}`, assert both files exist on disk, contain zero `NaN`s, and match the required column names and row counts.
-4. DEBUGGING ON ATTEMPT > 1:
-   - If `ATTEMPT > 1`, inspect the exact traceback in `history_text`, fix the root cause (e.g., column name, shape, dtype, API call) without stripping away the intended ML logic, and output the complete repaired script.
-   - Read-only project folder: never write inside the project folder; save all files inside `{working_folder}`.
-   - The very last stdout line MUST be `<{result_tag}>JSON</{result_tag}>` with keys:
-{result_keys_text}
-
-WHERE THINGS ARE:
-- Working folder: {working_folder}
-- Script path: {script_path}
-
-SITUATION & BUDGET:
-{digest}
-
-TASK FROM {caller_name}:
-{task_text}
-
-ATTEMPT {attempt_number} OF {max_code_attempts}.
-{history_text}"""
-
+    return "See dataset files in project data directory."
 
 @dataclass
 class CodeBlock:
@@ -241,9 +253,13 @@ def run_coder(
     lookups_left = MAX_LIBRARY_LOOKUPS
     previous_error_line = ""
     outcome = build_failure("The Coder did not run.")
-    digest = build_digest(AGENT_KEY, ledger)
+    # Build clean context digest for coder
+    digest = build_coder_digest(ledger)
 
     max_code_attempts = agent_context.config.limits.max_code_attempts
+    data_folder = str(agent_context.workspace.project_folder)
+    working_folder_str = str(working_folder)
+    dataset_columns = extract_dataset_columns(ledger, agent_context.workspace.project_folder)
 
     while attempts_used < max_code_attempts:
         recent_history = "\n\n".join(history_entries[-2:]) if history_entries else "First attempt."
@@ -253,7 +269,7 @@ def run_coder(
             lookups_left=lookups_left,
             result_tag=result_tag,
             result_keys_text=result_keys_text,
-            working_folder=working_folder,
+            working_folder=working_folder_str,
             script_path=script_path,
             digest=digest,
             caller_name=caller_name,
@@ -261,6 +277,8 @@ def run_coder(
             attempt_number=attempts_used + 1,
             max_code_attempts=max_code_attempts,
             history_text=recent_history,
+            data_folder=data_folder,
+            dataset_columns=dataset_columns,
         )
 
         answer_text = agent_context.llm_client.ask_text(AGENT_NAME, prompt)
@@ -290,10 +308,26 @@ def run_coder(
         )
         history_entries.append(f"Attempt {attempts_used} failed:\n{outcome.message_for_model}")
         if error_line == previous_error_line:
-            agent_context.event_bus.emit(
-                EventType.WARNING, AGENT_NAME, "identical error repeated, stopping"
+            hint = (
+                "CRITICAL WARNING: The script failed with the exact same error as the previous attempt! "
+                "You must change your approach:\n"
             )
-            break
+            err_lower = error_line.lower()
+            if "feature names" in err_lower or "unseen at fit time" in err_lower or "missing" in err_lower:
+                hint += (
+                    "- Feature name mismatch detected! Call: X_va = X_va.reindex(columns=X_tr.columns, fill_value=0.0) "
+                    "and X_test = X_test.reindex(columns=X_full.columns, fill_value=0.0)\n"
+                )
+            if "early stopping" in err_lower or "validation dataset" in err_lower:
+                hint += "- Early stopping error! When using GBDT early stopping, provide eval_set=[(X_va, y_va)] to .fit(), or remove early_stopping.\n"
+            if "isinf" in err_lower or "isnan" in err_lower or "could not convert string" in err_lower:
+                hint += (
+                    "- Non-numeric columns detected in matrix! Encode categorical columns with pd.get_dummies, "
+                    "drop target/id, and call df.fillna(0.0) instead of np.isinf on string columns.\n"
+                )
+            if "keyerror" in err_lower or "not in index" in err_lower:
+                hint += "- Column missing from DataFrame! Only select columns that exist in df.columns: [c for c in cols if c in df.columns].\n"
+            history_entries.append(hint)
         previous_error_line = error_line
 
     if outcome.succeeded:

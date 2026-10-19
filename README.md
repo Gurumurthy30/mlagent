@@ -1,7 +1,6 @@
 # mlagent
 
 <p align="center">
-  <a href="https://github.com/Gurumurthy30/mlagent/actions"><img src="https://github.com/Gurumurthy30/mlagent/actions/workflows/pytest.yml/badge.svg" alt="Tests"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg" alt="Python Version"></a>
   <a href="https://ollama.com"><img src="https://img.shields.io/badge/Ollama-local%20llm-orange.svg" alt="Ollama"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"></a>
@@ -21,11 +20,25 @@ All language model calls run locally through [Ollama](https://ollama.com) via La
 
 ## 💡 Key Innovations
 
-* **Grandmaster EDA & Feature Engineering Probes**: Moves beyond basic `.describe()` checklists to automated string decomposition, group-relative stats, missingness architecture, and target-encoded features.
+* **Exhaustive EDA & Feature Engineering Probes**: Moves beyond basic `.describe()` checklists to automated string decomposition, group-relative stats, missingness architecture, and target-encoded features.
 * **Leak-Free Fold Isolation**: Strictly enforces that all feature engineering and transformations fit inside training folds (`fit_preparation` / `apply_preparation`).
 * **Robust Coder Self-Repair**: Equipped with automatic traceback fixing, library lookups, and pre-flight assertions.
 * **Independent Verification & Anti-Leakage Guard**: The Evaluator independently recomputes validation scores and holdout metrics to prevent false discoveries and data leakage.
-* **Full Observability & Resume Capabilities**: Live terminal UI with instant progress status, full reproducibility, and automatic resumption if interrupted.
+* **Dynamic Memory Architecture & Technical Summarizer**: Converts all ledger transactions into typed, append-only memory cards (`workspace/memory/cards/`) with strict write-time compression. A dedicated `MemoryAssembler` injects only the required cards into per-agent prompt blocks without leaking raw state, and a terminal `Summarizer` agent synthesizes the entire journey into a publication-ready `README.md`.
+* **Single Mutable Truth (Champion Ratchet)**: Only the `champion_pointer` is updated in place upon verified promotion; all experiments, hypotheses, and verdicts are strictly immutable.
+
+---
+
+## 🧠 Memory Architecture
+
+`mlagent v3` replaces raw state dumps with a typed, append-only dynamic memory manager and automated technical summarizer:
+
+- **Append-Only Memory Cards**: Findings, hypotheses, runs, verdicts, and feature versions are written once and never mutated (`mlagent/memory/cards.py`).
+- **Single Mutable Truth**: Only `champion_pointer` (`memory/cards/champion_pointer/current.json`) is updated in place, strictly preserving the Champion-vs-Challenger linear ratchet.
+- **MemoryAssembler**: Formulates per-agent prompts using `<system>`, `<memory>`, `<task>`, `<schema>` blocks with priority tiering (`core` > `high` > `medium` > `low`), guaranteeing protected cards (`project_brief`, `champion_pointer`, `validation_plan`) are never trimmed.
+- **Technical Summarizer**: Concludes the pipeline (`finalizer -> summarizer -> END`) by reading the compressed memory story and writing a comprehensive, user-facing `README.md` with all 8 standard sections.
+
+See [docs/memory_architecture.md](docs/memory_architecture.md) for complete details.
 
 ---
 
@@ -34,8 +47,8 @@ All language model calls run locally through [Ollama](https://ollama.com) via La
 Run `mlagent` directly in any directory containing your dataset:
 
 ```powershell
-# 1. Navigate to your Kaggle or ML project folder
-cd C:\my_kaggle_project
+# 1. Navigate to your ML project folder
+cd C:\my_ml_project
 
 # 2. Launch the multi-agent pipeline
 mlagent start

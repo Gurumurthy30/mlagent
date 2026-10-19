@@ -1,356 +1,396 @@
-"""The Modeler: trains models.
+"""Modeler agent: progressive complexity model training across validation folds.
 
-Round 0 trains the baseline. A features round retrains the best setup on the new features.
-A model round tries a new model family or setup. Code checks for duplicate setups and
-ensures scripts adhere to the result contract.
+Executes candidate model training matching designated complexity tiers (Tier 1 baseline,
+Tier 2 ensemble/regularized, Tier 3 GBDT/Neural). Enforces strict fold isolation, saves
+out-of-fold and test predictions, and extracts task-specific diagnostic reports.
 """
 
 from __future__ import annotations
 
 import json
+from typing import Any
 
-from pydantic import BaseModel
+# Agent execution context and exceptions
+from mlagent.agents.base import AgentContext, AgentFailedError
 
-from mlagent.agents.base import AgentContext
+# Script execution sub-agent
 from mlagent.agents.coder import run_coder
-from mlagent.digest import build_digest
-from mlagent.events import EventType
-from mlagent.scoring import fill_run_from_result, make_setup_signature
-from mlagent.script_contract import (
-    MODEL_RESULT_KEYS_TEXT,
-    MODEL_SCRIPT_RULES_TEXT,
-    SPLITS_FORMAT_TEXT,
+
+# Master graph state models
+from mlagent.graph.state import (
+    AnomalyReport,
+    ClassificationReport,
+    ClusteringReport,
+    ErrorSlice,
+    ExperimentRun,
+    ForecastingReport,
+    Ledger,
+    ModelPlan,
+    MultilabelReport,
+    RankingReport,
+    RegressionReport,
 )
-from mlagent.settings import MAX_FEATURE_SOURCE_CHARS, RANDOM_SEED
-from mlagent.state import ExperimentRun, Ledger
+
+# Event logging and notifications
+from mlagent.helper.events import EventType
+
+# Script rules text from contract
+from mlagent.helper.script_contract import MODEL_SCRIPT_RULES_TEXT
+
+# Prompt templates and role definitions
+from mlagent.memory.assembler import MemoryAssembler
+from mlagent.memory.cards import ExperimentRunCard
+from mlagent.memory.store import MemoryStore
+from mlagent.prompts.modeler import MODELER_ROLE
 
 AGENT_KEY = "modeler"
 AGENT_NAME = "Modeler"
-RESULT_TAG = "RESULT"
+RESULT_TAG = "MODEL_RESULT"
 
-CHOOSE_PROMPT = """\
-You are the Modeler of an autonomous ML team. Each round you design ONE training run for any kind of \
-task: tables, text, images, audio, time series, relational or mixed. A Coder implements it and trains it \
-with fold-isolated features, saving out-of-fold and test predictions. An Evaluator recomputes the metric and \
-a Reviewer reads the result and routes the next step. A separate Tuner searches hyperparameters later on \
-the best family, and the Submitter blends the out-of-fold predictions of your runs. So your job is the \
-structural decision: which model, which objective, which training regime, which post-processing. Leave \
-fine parameter tuning to the Tuner.
-
-WHAT YOU CAN BUILD WITH (library knowledge)
-Always installed: numpy, pandas, scipy, scikit-learn, statsmodels, lightgbm, xgboost, catboost, optuna, \
-joblib, pillow, spacy, nltk. Only when the ENV finding in SITUATION confirms them: torch, torchvision, \
-torchaudio, transformers, sentence-transformers, timm, librosa, soundfile, opencv. Read the same finding \
-for GPU and its memory, CPU count, RAM and internet. With no ENV finding, assume CPU and the core packages \
-only. With internet, pretrained weights download once from the library's hub and are reused from cache.
-
-Model catalog by library:
-- lightgbm, xgboost, catboost: the strongest default for rows and columns. Objectives include binary, \
-multiclass, regression with L2, L1, huber, quantile, poisson, tweedie and gamma, and ranking (lambdarank, \
-rank:pairwise). CatBoost handles categoricals natively and also text and embedding features. GPU: xgboost \
-device cuda, catboost task_type GPU. Levers: depth and leaves, learning rate with early stopping, \
-regularization, class weights, subsampling.
-- scikit-learn: LogisticRegression, Ridge, Lasso, ElasticNet, SGD models and LinearSVC (fast and strong on \
-sparse text); SVC for small data; RandomForest and ExtraTrees (decorrelated from boosting); \
-HistGradientBoosting (native categoricals, poisson and quantile losses); KNeighbors on embeddings; \
-MultinomialNB and ComplementNB on text counts; MLP; CalibratedClassifierCV. These need scaling inside the \
-run where scale matters, since the feature table is not standardized.
-- statsmodels: GLM (poisson, gamma, tweedie), SARIMAX, ETSModel and ExponentialSmoothing, UnobservedComponents, \
-MixedLM. For regular, short or sparse series where a classical model is a strong baseline.
-- torch (custom): a tabular MLP with categorical embeddings, a 1D CNN or GRU or transformer for sequences \
-and series, a small CNN on spectrograms. Needs a training loop: DataLoader, AdamW, a scheduler, \
-mixed precision on GPU.
-- torchvision and timm: pretrained image backbones (resnet, efficientnet, convnext, swin, vit) via \
-timm.create_model(name, pretrained=True, num_classes=n); torchvision segmentation (deeplabv3, fcn, lraspp) \
-and detection (faster rcnn, retinanet) models. Fine-tune with augmentation, or freeze and use as a feature \
-extractor.
-- transformers and sentence-transformers: AutoModelForSequenceClassification (deberta-v3, roberta, bert, \
-xlm-roberta for mixed languages, distilbert and MiniLM for speed), token classification, question \
-answering, seq2seq (t5). Regression via num_labels=1. Frozen sentence embeddings need no fine-tuning.
-- audio: log-mel spectrograms (torchaudio or librosa) into a timm CNN; pretrained audio encoders through \
-transformers (wav2vec2, AST); or summary statistics into gradient boosting.
-- frozen pipelines (cheap, strong on CPU and GPU): extract embeddings once (cached), then train \
-logistic, ridge, kNN, SVM or gradient boosting on them. Often within a few points of fine-tuning at a \
-small fraction of the cost.
-
-How a run works here: the script reads raw inputs (documents, images, audio, series) from the project \
-folder, and may concatenate the feature table as side inputs; folds come from the splits file; each fold \
-saves out-of-fold and test predictions in the required format. Deep runs must be sized to finish all folds \
-within the time budget: pick a small backbone, a short fixed epoch schedule, mixed precision, dynamic \
-padding, an image size or token length justified by EDA, and free GPU memory between folds. Estimate \
-cost as samples x epochs divided by throughput before choosing. Without a GPU, fine-tuning beyond tiny data \
-is impractical; use frozen embeddings with a simple head, or classical models.
-
-STEP 1 - DIAGNOSE (inside thinking, from SITUATION, in this order)
-1. The Reviewer's latest instructions and bottleneck. They override everything else.
-2. The model family leaderboard and RUNS: families and objectives tried, scores, fold-to-fold spread, any \
-CV-versus-holdout gap.
-3. The failure pattern: overfitting (a large train/validation or CV/holdout gap, high fold variance), \
-underfitting (all families stuck near the same score, errors in the same segments), noise (differences \
-inside fold spread), or a crash or timeout.
-4. The data: modality, rows, class balance or target skew, categoricals, time order or groups, and what \
-EDA said about interactions, noise, duplicates and sequence lengths.
-5. Compute and DEAD ENDS: the hardware, the time budget and the setups already ruled out.
-
-STEP 2 - PICK THE PHASE
-- Baseline (round 0): the plan's baseline. A strong, reliable family at moderate settings. Its job is a \
-trustworthy reference score and a validated pipeline.
-- Breadth (fewer than about three families tried): the largest gains usually come from a different \
-inductive bias or a better input representation, not parameter tweaks. A typical ladder, to adapt: \
-tabular, boosting, then a different boosting library or bagged trees, then a linear or neural model; text, \
-tfidf with a linear model, then frozen embeddings with a head, then fine-tuned transformer; image, \
-handcrafted statistics or frozen embeddings with a head, then a fine-tuned pretrained backbone, then a \
-stronger backbone or other resolution; audio, summary statistics, then spectrogram CNN or a pretrained \
-audio encoder; series, seasonal baseline and boosting on lags, then a sequence model if data is plentiful.
-- Exploit (the last run improved the best score): keep the family and make one structural change that the \
-evidence supports: stronger regularization or more capacity, a better-aligned objective, native \
-categoricals, class weights, a larger resolution or token length, partial unfreezing, augmentation, \
-multi-seed averaging.
-- Stalled (two runs without gain): change the inductive bias, the objective, the target treatment or the \
-input representation; a different column subset or feature block is also valid.
-
-STEP 3 - DESIGN LEVERS
-- Objective aligned to the metric: poisson, tweedie or a log target for counts and skewed amounts; L1, \
-huber or quantile when outliers or absolute error matter; class weights or imbalance-aware settings when \
-the minority class matters; label smoothing, mixup or soft labels for noisy classification.
-- Regularization regime: shallow trees with strong shrinkage for noisy or small data; deeper trees when \
-underfitting; for deep models, learning rate, weight decay, dropout, augmentation and number of epochs.
-- Variance control: several seeds, fold averaging, or test-time augmentation inside the run when fold \
-spread is large.
-- Post-processing aligned to the metric:
-  Ranking and probability metrics (AUC, PR-AUC, ranking scores): save raw probabilities or scores, never \
-thresholded.
-  Log-loss and Brier: clip probabilities to [1e-6, 1-1e-6] and check calibration (temperature scaling for \
-deep models).
-  Label metrics (accuracy, F1, MCC, kappa): tune the threshold, per-class thresholds or cut points on \
-out-of-fold predictions, then apply them to validation, holdout and test; multiclass takes the argmax.
-  Skewed or relative-error regression: train on log1p of the target and invert with expm1, clipped to \
-valid bounds; clip or round to valid values when the metric needs it.
-  Segmentation or detection: tune the mask threshold, minimum area or NMS threshold on out-of-fold \
-predictions.
-  Use "none" when nothing applies.
-
-STEP 4 - CHOOSE
-Judge each possible run on: evidence (what in SITUATION supports it); upside (how much it could raise \
-the best score); diversity (a different but still competitive model adds blend value, and a model far \
-below the best earns almost no blend weight); and cost (runtime, memory, GPU need, fragility), which must \
-fit the hardware and time budget. Pick the best and change one meaningful thing so the result can be \
-credited. Differences smaller than fold-to-fold noise are ties.
-
-HARD LIMITS
-- Use only what is installed and confirmed. Size every run so training across all folds finishes within \
-the time budget, with early stopping or a fixed short schedule.
-- Never repeat a setup (family, parameters, feature version) listed in RUNS or DEAD ENDS. Changing only a \
-seed is not a new setup. A duplicate is rejected and you are asked again.
-- Reuse family names already in the leaderboard (lightgbm, not lgbm). New families use clear snake_case \
-names such as tfidf_logistic, frozen_embedding_ridge, finetune_transformer, finetune_timm_cnn, \
-tabular_mlp_torch, gru_sequence, sarimax.
-- model_params is a flat object of concrete values (for deep runs: backbone, image_size or max_length, \
-epochs, learning rate, batch size, freezing, augmentation). Everything about the metric belongs in \
-post_processing.
-
-FORMAT EXAMPLES (level of detail only; invented):
-- thinking: The best run is lightgbm at 0.842 with fold spread 0.004 and a CV-holdout gap of 0.011, which \
-points to mild overfitting. Only boosting has been tried. A strongly regularized linear model would add a \
-different bias if it stays within about 0.01 of the best.
-  hypothesis: A scaled logistic regression with L2 on the _cat and _freq columns will come within 0.01 of \
-lightgbm and add a decorrelated model. If it trails by more than 0.03 the signal is mostly interactions \
-and the family is refuted.
-  model_family: logistic_regression | model_params: C 0.5, penalty l2, max_iter 2000, scale numeric \
-columns, one-hot the _cat columns | post_processing: tune the threshold on out-of-fold probabilities to \
-maximize F1; apply to validation, holdout and test.
-- thinking: The ENV finding shows a 24 GB GPU and timm. The tfidf model scores 0.71 and frozen embeddings \
-with a head score 0.78, so the representation is the bottleneck, and 8,000 images at 224 pixels fit in the \
-budget.
-  hypothesis: Fine-tuning a small pretrained convnext for 6 epochs will beat the frozen head by at least \
-0.03; if the gain is under 0.01 the frozen head is enough.
-  model_family: finetune_timm_cnn | model_params: backbone convnext_tiny, image_size 224, epochs 6, lr \
-0.0002, batch_size 32, freeze_epochs 1, augmentation flip and random crop, tta flip | post_processing: \
-temperature scaling on out-of-fold logits, then argmax; save probabilities.
-
-SITUATION:
-{digest}
-
-THIS ROUND: {round_goal}
-
-OUTPUT:
-Return JSON with exactly these fields in order:
-- thinking: 4-6 sentences. State the failure pattern you diagnosed, the confirmed hardware and packages, \
-the phase, the options you compared, and why this one wins on evidence, upside, diversity and cost.
-- hypothesis: 1-2 sentences, falsifiable, with the result that would refute it.
-- model_family: snake_case name.
-- model_params: flat object of concrete values.
-- post_processing: the exact rule for out-of-fold and test predictions, or "none".
-- reason: one sentence on what this run tests and why (it becomes the run summary)."""
+RESULT_KEYS = """\
+- "train_score_mean": float
+- "cv_fold_scores": list of floats
+- "cv_mean": float
+- "cv_std": float
+- "holdout_score": float or null
+- "secondary_metrics": dict mapping metric name to float
+- "top_feature_importances": dict mapping feature name to importance float
+- "worst_error_slices": list of objects {"slice_condition": str, "sample_count": int, "slice_metric_score": float, "degradation_vs_overall": float}
+- "diagnostic_report": dict with task family metrics
+- "val_predictions_path": "val_predictions.csv"
+- "test_predictions_path": "test_predictions.csv"
+- "model_path": "model.pkl" or "model.bin"
+- "notes": str"""
 
 
-class ModelChoice(BaseModel):
-    thinking: str = ""
-    hypothesis: str = ""
-    model_family: str
-    model_params: dict = {}
-    post_processing: str = ""
-    reason: str = ""
+def _parse_diagnostic_report(task_family: str, raw_report: dict[str, Any]) -> dict[str, Any]:
+    # Parse raw diagnostic dictionary into appropriate task family report model
+    out: dict[str, Any] = {}
+    if "classification" in task_family:
+        if "multilabel" in task_family:
+            out["multilabel_report"] = MultilabelReport(
+                hamming_loss=float(raw_report.get("hamming_loss", 0.0)),
+                micro_f1=float(raw_report.get("micro_f1", 0.0)),
+                macro_f1=float(raw_report.get("macro_f1", 0.0)),
+            )
+        else:
+            out["classification_report"] = ClassificationReport(
+                accuracy=float(raw_report.get("accuracy", 0.0)),
+                balanced_accuracy=float(raw_report.get("balanced_accuracy", 0.0)),
+                f1_macro=float(raw_report.get("f1_macro", 0.0)),
+                roc_auc=raw_report.get("roc_auc"),
+                log_loss=raw_report.get("log_loss"),
+                confusion_matrix=raw_report.get("confusion_matrix", []),
+                per_class_f1=raw_report.get("per_class_f1", {}),
+            )
+    elif "regression" in task_family:
+        out["regression_report"] = RegressionReport(
+            rmse=float(raw_report.get("rmse", 0.0)),
+            mae=float(raw_report.get("mae", 0.0)),
+            r2=float(raw_report.get("r2", 0.0)),
+            median_absolute_error=float(raw_report.get("median_absolute_error", 0.0)),
+            max_error=float(raw_report.get("max_error", 0.0)),
+        )
+    elif "clustering" in task_family:
+        out["clustering_report"] = ClusteringReport(
+            silhouette_score=float(raw_report.get("silhouette_score", 0.0)),
+            calinski_harabasz=float(raw_report.get("calinski_harabasz", 0.0)),
+            davies_bouldin=float(raw_report.get("davies_bouldin", 0.0)),
+        )
+    elif "ranking" in task_family:
+        out["ranking_report"] = RankingReport(
+            ndcg_at_5=float(raw_report.get("ndcg_at_5", 0.0)),
+            ndcg_at_10=float(raw_report.get("ndcg_at_10", 0.0)),
+            map_at_10=float(raw_report.get("map_at_10", 0.0)),
+            mean_reciprocal_rank=float(raw_report.get("mean_reciprocal_rank", 0.0)),
+        )
+    elif "forecasting" in task_family or "time_series" in task_family:
+        out["forecasting_report"] = ForecastingReport(
+            horizon_mae=raw_report.get("horizon_mae", []),
+            wape=float(raw_report.get("wape", 0.0)),
+            smape=float(raw_report.get("smape", 0.0)),
+            prediction_interval_coverage_80=raw_report.get("prediction_interval_coverage_80"),
+        )
+    elif "anomaly" in task_family:
+        out["anomaly_report"] = AnomalyReport(
+            precision_at_k=float(raw_report.get("precision_at_k", 0.0)),
+            roc_auc=raw_report.get("roc_auc"),
+            pr_auc=raw_report.get("pr_auc"),
+            detected_anomaly_ratio=float(raw_report.get("detected_anomaly_ratio", 0.0)),
+        )
+    return out
 
 
-def run_modeler(ledger: Ledger, agent_context: AgentContext) -> ExperimentRun:
-    """Train one model. Crashes are returned as runs with errors, never raised."""
+def run_modeler(ledger: Ledger, agent_context: AgentContext) -> ModelPlan:
+    # Plan and train model for current hypothesis
     event_bus = agent_context.event_bus
-    experiment_id = ledger.next_experiment_id()
-    experiment_folder = agent_context.workspace.experiment_folder(experiment_id)
+    exp_id = ledger.next_experiment_id()
+    hyp = ledger.hypotheses[-1] if ledger.hypotheses else None
 
-    # 1. Choose setup (inline duplicate check)
-    tried_signatures = {
-        make_setup_signature(r.model_family, r.model_params, r.feature_version)
-        for r in ledger.runs
-        if not r.crashed
-    }
+    target_family = hyp.target_model_family if hyp and hyp.target_model_family else "lightgbm"
+    complexity_tier = hyp.model_complexity_tier if hyp else "tier_1_simple_baseline"
+    feature_version = ledger.latest_candidate_feature_version or ledger.active_base_feature_version()
 
-    best_run = ledger.best_approved_run()
-    choice: ModelChoice | None = None
-
-    if ledger.focus == "features" and best_run is not None:
-        candidate_sig = make_setup_signature(
-            best_run.model_family, best_run.model_params, ledger.current_feature_version
-        )
-        if candidate_sig not in tried_signatures:
-            choice = ModelChoice(
-                hypothesis=(
-                    f"Retraining best model family ({best_run.model_family}) on upgraded "
-                    f"features v{ledger.current_feature_version} will improve cross-validation score."
-                ),
-                model_family=best_run.model_family,
-                model_params=best_run.model_params,
-                post_processing=best_run.post_processing or ledger.plan.metric_post_processing,
-                reason=f"retrain best setup ({best_run.model_family}) on features v{ledger.current_feature_version}",
-            )
-
-    if choice is None:
-        round_goal = (
-            f"Train the Round 0 baseline from the plan: {ledger.plan.baseline_description} "
-            f"(metric post-processing: {ledger.plan.metric_post_processing or 'standard'})"
-            if ledger.focus == "start"
-            else (
-                "Choose an UNTRIED model family from the plan (or a structurally distinct architecture) "
-                "with metric-aligned post-processing to beat the best run and increase ensemble diversity."
-            )
-        )
-        digest = build_digest(AGENT_KEY, ledger)
-        candidate: ModelChoice | None = None
-        for _ in range(3):
-            prompt = CHOOSE_PROMPT.format(digest=digest, round_goal=round_goal)
-            candidate = agent_context.llm_client.ask_structured(AGENT_NAME, prompt, ModelChoice)
-            sig = make_setup_signature(
-                candidate.model_family, candidate.model_params, ledger.current_feature_version
-            )
-            if sig not in tried_signatures:
-                choice = candidate
-                break
-        if choice is None:
-            # Fallback choice if duplicates kept recurring
-            choice = candidate or ModelChoice(
-                model_family="baseline_model",
-                model_params={},
-                reason="fallback model after duplicate choices",
-            )
-
-    if not choice.post_processing and ledger.plan.metric_post_processing:
-        choice.post_processing = ledger.plan.metric_post_processing
-
-    event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, f"{experiment_id}: {choice.reason}")
     event_bus.emit(
-        EventType.STATUS,
+        EventType.AGENT_STARTED,
         AGENT_NAME,
-        f"training {choice.model_family} on features v{ledger.current_feature_version}",
-        {"reason": choice.reason},
+        f"training {target_family} ({complexity_tier}) on features v{feature_version} for {exp_id}",
     )
 
-    # 2. Ask Coder to train and score
-    workspace = agent_context.workspace
-    features_path = workspace.features_file(ledger.current_feature_version)
-    features_source = ""
-    if features_path.is_file():
-        features_source = features_path.read_text(encoding="utf-8")[:MAX_FEATURE_SOURCE_CHARS]
-
-    direction = "higher" if ledger.brief.higher_is_better else "lower"
-    instructions = ledger.reviews[-1].instructions if ledger.reviews else []
-    instructions_text = "\n".join(f"- {i}" for i in instructions) or "none"
-    post_proc_text = f"Post-processing strategy: {choice.post_processing}\n" if choice.post_processing else ""
+    primary_metric = ledger.brief.primary_metric
+    higher_is_better = ledger.brief.higher_is_better
+    store = MemoryStore(agent_context.workspace.root)
+    assembler = MemoryAssembler(store)
 
     task_text = (
-        f"Train and score this model with ONE complete, leak-free Python script.\n"
-        f"Model family: {choice.model_family}\n"
-        f"Parameters: {json.dumps(choice.model_params)}\n"
-        f"Reason: {choice.reason}\n"
-        f"Hypothesis: {choice.hypothesis}\n"
-        f"{post_proc_text}"
-        f"Primary metric: {ledger.brief.primary_metric} ({direction} is better)\n"
-        f"Extra metrics: {ledger.brief.extra_metrics}\n"
-        f"Target column: {ledger.brief.target or 'none'}, ID column: {ledger.brief.id_column or 'none'}\n"
-        f"Seed: {RANDOM_SEED}\n"
-        f"Use GPU: {'yes' if ledger.plan.use_gpu else 'no'}\n"
-        f"Project folder (read-only): {workspace.project_folder}\n"
-        f"Experiment folder (outputs): {experiment_folder}\n"
-        f"Splits file: {workspace.splits_path}\n"
-        f"Features file: {features_path} (import {features_path.stem} after adding {workspace.features_folder} to sys.path)\n"
-        f"Deliverable format: {ledger.brief.deliverable_format}\n"
-        f"Reviewer instructions:\n{instructions_text}\n\n"
-        "TRAINING & PREDICTION PROTOCOL:\n"
-        "1. FOLD-ISOLATED FEATURE PREPARATION: For each CV split `k` (`0 .. n_splits - 1`), call `state = fit_preparation(train_fold_df, seed=Seed)` "
-        "strictly on `train_fold_df`, then transform `train_fold_df`, `val_fold_df`, `holdout_df` (if `fold == -1` exists), and `test_df` using `apply_preparation(df, state)`.\n"
-        "2. FOLD-AVERAGED TEST PREDICTIONS: Accumulate raw test predictions (or predicted probabilities for classification) across all `n_splits` fold models (`test_preds_avg = sum(fold_test_preds) / n_splits`).\n"
-        "3. METRIC POST-PROCESSING: If `Post-processing strategy` specifies out-of-fold threshold tuning (for F1/accuracy/MCC/QWK), probability clipping, or target `log1p`/`expm1`, "
-        "fit the threshold/transform on the out-of-fold validation predictions (`fold >= 0`), apply it to `val_predictions.csv` (`prediction` column), holdout (`fold == -1`), and `test_predictions.csv`.\n"
-        "4. SAVE REQUIRED FILES IN EXPERIMENT FOLDER:\n"
-        "   - `val_predictions.csv`: must include `example_id`, `fold` (for all CV folds `0..n_splits-1` AND holdout `fold == -1`), `prediction` (formatted for the primary metric), AND `proba_<class>` columns for classification.\n"
-        "   - `test_predictions.csv`: must strictly match `Deliverable format` (exact column names, exact test row count, ID order, and value type: probabilities vs discrete class labels/booleans).\n"
-        "   - Save the trained model artifact as `model.<ext>`.\n"
-        "5. Return JSON RESULT with validation_scores, holdout_score, test_predictions_path, model_path, etc.\n\n"
-        f"SCRIPT RULES:\n{MODEL_SCRIPT_RULES_TEXT}\n\n"
-        f"{SPLITS_FORMAT_TEXT}\n\n"
-        f"Features source excerpt:\n{features_source}"
+        f"Train model experiment {exp_id} using model family '{target_family}' with complexity tier '{complexity_tier}' "
+        f"on feature version v{feature_version}. Optimize for primary metric '{primary_metric}'."
+    )
+    prompt = assembler.build_prompt(
+        agent_name="modeler",
+        ledger=ledger,
+        task=task_text,
+        schema_hint=str(ModelPlan.model_json_schema()),
     )
 
-    coder_res = run_coder(
-        task_text=task_text,
+    try:
+        plan = agent_context.llm_client.ask_structured(
+            agent_name=AGENT_NAME,
+            prompt=prompt,
+            answer_model=ModelPlan,
+            system_message=MODELER_ROLE,
+        )
+    except Exception as exc:
+        raise AgentFailedError(f"Model planning failed for {exp_id}: {exc}") from exc
+
+    # Set up experiment working directory
+    exp_folder = agent_context.workspace.artifacts_folder / "experiments" / exp_id
+    exp_folder.mkdir(parents=True, exist_ok=True)
+    splits_file = agent_context.workspace.artifacts_folder / "splits.json"
+    features_script = agent_context.workspace.artifacts_folder / "features" / f"features_v{feature_version}.py"
+    project_folder = agent_context.workspace.project_folder
+
+    target_col = ledger.brief.target_column or "target"
+    id_cols = ledger.brief.id_columns
+    id_col = id_cols[0] if id_cols else "Id"
+
+    coder_task = (
+        f"Train model experiment {exp_id} using {plan.model_family} on feature version v{feature_version}.\n\n"
+        f"Working Directory: {exp_folder}\n"
+        f"Splits JSON: {splits_file}\n"
+        f"Features Module: {features_script}\n"
+        f"Project Data: {project_folder}\n"
+        f"Target Column: {target_col}\n"
+        f"ID Column: {id_col}\n"
+        f"Primary Metric: {primary_metric} (higher is better: {higher_is_better})\n"
+        f"Hyperparameters: {json.dumps(plan.hyperparameters, indent=2)}\n"
+        f"Post-processing: {plan.post_processing_strategy}\n\n"
+        f"Rules:\n{MODEL_SCRIPT_RULES_TEXT}\n\n"
+        "CRITICAL CODE PATTERNS (FOLLOW EXACTLY):\n"
+        "1. DYNAMIC FEATURES IMPORT:\n"
+        "   import sys, os\n"
+        f"   features_dir = r'{features_script.parent}'\n"
+        "   if features_dir not in sys.path:\n"
+        "       sys.path.insert(0, features_dir)\n"
+        f"   from {features_script.stem} import fit_preparation, apply_preparation\n\n"
+        "2. LOAD SPLITS, PREPARE DATA & ENSURE NUMERIC FEATURES (PREVENTS STRING & MISMATCH ERRORS):\n"
+        f"   with open(r'{splits_file}', 'r', encoding='utf-8') as f:\n"
+        "       splits_data = json.load(f)\n"
+        "   example_ids = np.array(splits_data['example_ids'])\n"
+        "   fold_of_example = np.array(splits_data['fold_of_example'])\n"
+        "   n_splits = int(splits_data['n_splits'])\n"
+        f"   drop_cols = ['{target_col}', '{id_col}']\n"
+        f"   is_linear = any(k in '{plan.model_family}'.lower() for k in ['ridge', 'linear', 'logistic', 'elastic', 'mlp', 'svm', 'knn'])\n"
+        "   # Slicing folds:\n"
+        "   for fold in range(n_splits):\n"
+        "       val_idx = example_ids[fold_of_example == fold]\n"
+        "       train_idx = example_ids[(fold_of_example != fold) & (fold_of_example != -1)]\n"
+        "       train_fold = train_df.iloc[train_idx].reset_index(drop=True)\n"
+        "       val_fold = train_df.iloc[val_idx].reset_index(drop=True)\n"
+        f"       y_tr = train_fold['{target_col}']\n"
+        f"       y_va = val_fold['{target_col}']\n"
+        "       prep_state = fit_preparation(train_fold)\n"
+        "       X_tr = apply_preparation(train_fold, prep_state)\n"
+        "       X_va = apply_preparation(val_fold, prep_state)\n"
+        "       # DROP TARGET & ID COLUMNS (PREVENTS TARGET LEAKAGE):\n"
+        "       X_tr = X_tr.drop(columns=[c for c in drop_cols if c in X_tr.columns], errors='ignore')\n"
+        "       X_va = X_va.drop(columns=[c for c in drop_cols if c in X_va.columns], errors='ignore')\n"
+        "       # CONVERT CATEGORICAL STRINGS TO NUMERIC (PREVENTS 'could not convert string to float' ERRORS):\n"
+        "       cat_cols = X_tr.select_dtypes(include=['object', 'category', 'string']).columns.tolist()\n"
+        "       if cat_cols:\n"
+        "           X_tr = pd.get_dummies(X_tr, columns=cat_cols, drop_first=True, dummy_na=False)\n"
+        "           X_va = pd.get_dummies(X_va, columns=cat_cols, drop_first=True, dummy_na=False)\n"
+        "       # UNCONDITIONALLY ALIGN VALIDATION FEATURES TO TRAINING COLUMNS (PREVENTS FEATURE NAME MISMATCH):\n"
+        "       X_va = X_va.reindex(columns=X_tr.columns, fill_value=0.0)\n"
+        "       # Clean NaNs and Infs safely on numeric columns:\n"
+        "       X_tr = X_tr.fillna(0.0).replace([np.inf, -np.inf], 0.0)\n"
+        "       X_va = X_va.fillna(0.0).replace([np.inf, -np.inf], 0.0)\n"
+        "       if is_linear:\n"
+        "           from sklearn.preprocessing import StandardScaler\n"
+        "           scaler = StandardScaler()\n"
+        "           X_tr = pd.DataFrame(scaler.fit_transform(X_tr), columns=X_tr.columns)\n"
+        "           X_va = pd.DataFrame(scaler.transform(X_va), columns=X_tr.columns)\n\n"
+        "3. FINAL MODEL & TEST PREDICTIONS (APPLY IDENTICAL CLEANING):\n"
+        "   full_train_idx = example_ids[fold_of_example != -1]\n"
+        "   full_train_df = train_df.iloc[full_train_idx].reset_index(drop=True)\n"
+        f"   y_full = full_train_df['{target_col}']\n"
+        "   final_prep_state = fit_preparation(full_train_df)\n"
+        "   X_full = apply_preparation(full_train_df, final_prep_state)\n"
+        "   X_test = apply_preparation(test_df, final_prep_state)\n"
+        "   X_full = X_full.drop(columns=[c for c in drop_cols if c in X_full.columns], errors='ignore')\n"
+        "   X_test = X_test.drop(columns=[c for c in drop_cols if c in X_test.columns], errors='ignore')\n"
+        "   cat_cols_full = X_full.select_dtypes(include=['object', 'category', 'string']).columns.tolist()\n"
+        "   if cat_cols_full:\n"
+        "       X_full = pd.get_dummies(X_full, columns=cat_cols_full, drop_first=True, dummy_na=False)\n"
+        "       X_test = pd.get_dummies(X_test, columns=cat_cols_full, drop_first=True, dummy_na=False)\n"
+        "   # UNCONDITIONALLY ALIGN TEST FEATURES TO FULL TRAIN COLUMNS:\n"
+        "   X_test = X_test.reindex(columns=X_full.columns, fill_value=0.0)\n"
+        "   X_full = X_full.fillna(0.0).replace([np.inf, -np.inf], 0.0)\n"
+        "   X_test = X_test.fillna(0.0).replace([np.inf, -np.inf], 0.0)\n"
+        "   if is_linear:\n"
+        "       from sklearn.preprocessing import StandardScaler\n"
+        "       scaler_full = StandardScaler()\n"
+        "       X_full = pd.DataFrame(scaler_full.fit_transform(X_full), columns=X_full.columns)\n"
+        "       X_test = pd.DataFrame(scaler_full.transform(X_test), columns=X_full.columns)\n\n"
+        "4. HOLDOUT EVALUATION (MANDATORY IF HOLDOUT EXAMPLES EXIST):\n"
+        "   holdout_idx = example_ids[fold_of_example == -1]\n"
+        "   if len(holdout_idx) > 0:\n"
+        "       holdout_fold = train_df.iloc[holdout_idx].reset_index(drop=True)\n"
+        f"       y_holdout = holdout_fold['{target_col}']\n"
+        "       X_holdout = apply_preparation(holdout_fold, final_prep_state)\n"
+        "       X_holdout = X_holdout.drop(columns=[c for c in drop_cols if c in X_holdout.columns], errors='ignore')\n"
+        "       if cat_cols_full:\n"
+        "           X_holdout = pd.get_dummies(X_holdout, columns=cat_cols_full, drop_first=True, dummy_na=False)\n"
+        "       X_holdout = X_holdout.reindex(columns=X_full.columns, fill_value=0.0)\n"
+        "       X_holdout = X_holdout.fillna(0.0).replace([np.inf, -np.inf], 0.0)\n"
+        "       if is_linear:\n"
+        "           X_holdout = pd.DataFrame(scaler_full.transform(X_holdout), columns=X_full.columns)\n"
+        "       holdout_preds = final_model.predict(X_holdout)\n"
+        "       # calculate metric on holdout using same metric function as CV folds:\n"
+        "       holdout_score = float(metric_fn(y_holdout, holdout_preds))\n"
+        "   else:\n"
+        "       holdout_score = None\n\n"
+        "5. GBDT EARLY STOPPING & METRIC RULES:\n"
+        "   - In CV folds: when using LightGBM/XGBoost/CatBoost with early stopping, you MUST pass eval_set=[(X_va, y_va)] to .fit().\n"
+        "   - In final_model: do NOT use early stopping without an eval set; remove early stopping callbacks or pass eval_set=[(X_holdout, y_holdout)] so it does not crash with 'ValueError: Must have at least 1 validation dataset for early stopping'.\n"
+        "   - Include 'holdout_score': holdout_score in <MODEL_RESULT> JSON dictionary.\n"
+        "   - NEVER call np.isinf(df) or np.isnan(df) on DataFrames (raises TypeError: ufunc 'isinf' not supported)! Use df.select_dtypes(include=[np.number]).replace([np.inf, -np.inf], 0.0).fillna(0.0).\n\n"
+        "6. REQUIRED FILES TO WRITE IN WORKING DIRECTORY:\n"
+        f"   - val_predictions.csv (columns: ['{id_col}', 'fold', 'prediction'])\n"
+        f"   - test_predictions.csv (columns: ['{id_col}', 'prediction'])\n"
+        "   - model.pkl (saved via joblib.dump)\n"
+        "7. Output JSON tagged with <MODEL_RESULT>."
+    )
+
+    coder_result = run_coder(
+        task_text=coder_task,
         result_tag=RESULT_TAG,
-        result_keys_text=MODEL_RESULT_KEYS_TEXT,
-        working_folder=experiment_folder,
+        result_keys_text=RESULT_KEYS,
+        working_folder=exp_folder,
         script_name="train_model.py",
         caller_key=AGENT_KEY,
         ledger=ledger,
         agent_context=agent_context,
     )
 
-    # 3. Assemble ExperimentRun
-    run = ExperimentRun(
-        experiment_id=experiment_id,
-        focus=ledger.focus,
-        model_family=choice.model_family,
-        model_params=choice.model_params,
-        summary=choice.reason,
-        hypothesis=choice.hypothesis,
-        post_processing=choice.post_processing,
-        feature_version=ledger.current_feature_version,
-        script_path=str(coder_res.script_path),
-        artifact_dir=str(experiment_folder),
+    # Initialize experiment run record
+    run_record = ExperimentRun(
+        experiment_id=exp_id,
         iteration=ledger.iteration,
+        hypothesis_id=hyp.hypothesis_id if hyp else "",
+        route_type=hyp.route if hyp else "fe_and_model",
+        model_family=plan.model_family,
+        complexity_tier=plan.complexity_tier,
+        model_params=plan.hyperparameters,
+        feature_version=feature_version,
+        script_path=str(exp_folder / "train_model.py"),
+        artifact_dir=str(exp_folder),
+        model_path=str(exp_folder / "model.pkl"),
+        summary=plan.cli_summary,
     )
 
-    if not coder_res.succeeded:
-        run.error = coder_res.error_text or "Training script failed."
-    else:
-        run.error = fill_run_from_result(run, coder_res.result_data, experiment_folder)
-
-    if run.crashed:
-        event_bus.emit(EventType.WARNING, AGENT_NAME, f"{experiment_id} crashed: {run.error[:80]}")
-    else:
-        score_str = f"{run.score_mean:.4f}" if run.score_mean is not None else "n/a"
-        event_bus.emit(EventType.AGENT_FINISHED, AGENT_NAME, f"{experiment_id} trained, score {score_str}")
+    if not coder_result.succeeded:
+        run_record.error_traceback = coder_result.error_text
+        ledger.runs.append(run_record)
         event_bus.emit(
-            EventType.RESULT,
+            EventType.WARNING,
             AGENT_NAME,
-            f"{experiment_id} ({choice.model_family}): score {score_str} on features v{ledger.current_feature_version}",
+            f"Experiment {exp_id} failed during execution: {coder_result.error_text[:120]}",
         )
+        return plan
 
-    return run
+    # Extract metrics and scores
+    data = coder_result.result_data
+    run_record.train_score_mean = data.get("train_score_mean")
+    run_record.cv_fold_scores = [float(s) for s in data.get("cv_fold_scores", [])]
+    run_record.cv_mean = float(data.get("cv_mean")) if data.get("cv_mean") is not None else None
+    run_record.cv_std = float(data.get("cv_std")) if data.get("cv_std") is not None else None
+    run_record.holdout_score = float(data.get("holdout_score")) if data.get("holdout_score") is not None else None
+    run_record.secondary_metrics = {k: float(v) for k, v in data.get("secondary_metrics", {}).items()}
+    run_record.top_feature_importances = {k: float(v) for k, v in data.get("top_feature_importances", {}).items()}
+
+    # Extract error slices
+    raw_slices = data.get("worst_error_slices", [])
+    run_record.worst_error_slices = [
+        ErrorSlice(
+            slice_condition=s.get("slice_condition", "unknown"),
+            sample_count=int(s.get("sample_count", 0)),
+            slice_metric_score=float(s.get("slice_metric_score", 0.0)),
+            degradation_vs_overall=float(s.get("degradation_vs_overall", 0.0)),
+        )
+        for s in raw_slices
+        if isinstance(s, dict)
+    ]
+
+    # Parse task-family specific diagnostic report
+    raw_diag = data.get("diagnostic_report", {})
+    if isinstance(raw_diag, dict):
+        diag_attrs = _parse_diagnostic_report(ledger.brief.task_family, raw_diag)
+        for attr, val in diag_attrs.items():
+            setattr(run_record, attr, val)
+
+    ledger.runs.append(run_record)
+
+    # Append ExperimentRunCard to MemoryStore
+    cv_val = run_record.cv_mean if run_record.cv_mean is not None else 0.0
+    cv_err = run_record.cv_std if run_record.cv_std is not None else 0.0
+    holdout_val = run_record.holdout_score if run_record.holdout_score is not None else 0.0
+    summary_text = (
+        f"Run {exp_id}: {plan.model_family} (Tier {plan.complexity_tier}, FV {feature_version}). "
+        f"CV={cv_val:.4f}±{cv_err:.4f}. Holdout={holdout_val:.4f}. Status={run_record.overfitting_status}."
+    )
+    run_card = ExperimentRunCard(
+        tag="experiment_run",
+        card_id=exp_id,
+        owner="modeler",
+        iteration=ledger.iteration,
+        memory_summary=summary_text,
+        payload={
+            "experiment_id": exp_id,
+            "model_family": plan.model_family,
+            "tier": plan.complexity_tier,
+            "feature_version": feature_version,
+            "cv_mean": run_record.cv_mean,
+            "cv_std": run_record.cv_std,
+            "holdout_score": run_record.holdout_score,
+            "train_score_mean": run_record.train_score_mean,
+            "overfitting_status": run_record.overfitting_status,
+            "feature_importances": dict(list(run_record.top_feature_importances.items())[:5]),
+            "script_path": str(exp_folder / "train_model.py"),
+            "artifact_dir": str(exp_folder),
+        },
+        artifact_paths=[str(exp_folder / "train_model.py"), str(exp_folder)],
+        priority="high",
+    )
+    try:
+        store.append_card(run_card)
+    except FileExistsError:
+        pass
+
+    score_str = f"CV={run_record.cv_mean:.4f}" if run_record.cv_mean is not None else "crashed"
+    event_bus.emit(
+        EventType.AGENT_FINISHED,
+        AGENT_NAME,
+        f"Experiment {exp_id} completed ({plan.model_family}, {score_str}): {plan.cli_summary}",
+    )
+    return plan

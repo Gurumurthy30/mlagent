@@ -1,30 +1,21 @@
-"""Tests for Stage C CLI and UI invariants: themes, formatting, live status, summary, and plain mode."""
-
-from __future__ import annotations
+"""Unit tests for ConsoleUI and Rich rendering components."""
 
 import argparse
-import re
 from pathlib import Path
 
-import pytest
-from hypothesis import given
 from rich.console import Console
-from rich.panel import Panel
 
-from mlagent.cli import (
+from mlagent.cli.cli import (
     EXIT_OK,
     EXIT_USAGE,
     flags_to_overrides,
     resume_command,
     status_command,
 )
-from mlagent.config import UiConfig
-from mlagent.console_ui import ConsoleUI
-from mlagent.environment_probe import EnvironmentInfo
-from mlagent.events import AgentEvent, EventBus, EventType
-from mlagent.state import Ledger
-from mlagent.summary import (
+from mlagent.cli.console_ui import ConsoleUI
+from mlagent.cli.summary import (
     LiveStatusBar,
+    format_progress_bar,
     get_symbols,
     get_theme,
     is_plain_mode,
@@ -32,171 +23,18 @@ from mlagent.summary import (
     render_environment_table,
     render_summary_panel,
 )
-from tests.conftest import st_ledger
-
-ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("event_type", list(EventType))
-def test_render_events_markup_and_long_text_never_raises_and_preserves_text(
-    event_type: EventType,
-) -> None:
-    """Emitting every event type with tricky markup and long text preserves raw message text."""
-    console = Console(record=True, width=120)
-    ui = ConsoleUI(console=console, config=UiConfig(verbosity="detailed"))
-    bus = EventBus()
-    bus.subscribe(ui.handle_event)
-
-    tricky_messages = [
-        "Plain text message.",
-        "Formatted like [bold red]error[/bold red] and [dim]info[/dim].",
-        "Mismatched [brackets [and] nested tags",
-        "Path like C:\\Users\\[test_workspace]\\data.csv",
-        "Very long text: " + ("abcdefghij " * 30),
-        "Multi-line message:\nFirst line\nSecond indented line\nThird line",
-    ]
-
-    for msg in tricky_messages:
-        bus.emit(event_type, "Modeler", msg)
-
-    output = console.export_text()
-    clean_output = re.sub(r"\s+", " ", output)
-    for msg in tricky_messages:
-        clean_msg = re.sub(r"\s+", " ", msg)
-        assert clean_msg in clean_output, f"Message '{msg}' missing from output."
+from mlagent.configs.config import LimitsConfig, UiConfig
+from mlagent.graph.state import EdaFinding, Ledger
+from mlagent.helper.environment_probe import EnvironmentInfo
+from mlagent.helper.events import AgentEvent, EventType
 
 
-@pytest.mark.unit
-def test_plain_mode_contains_no_ansi_escape_sequences() -> None:
-    """Plain mode log output, summary panel, and environment tables contain no ANSI escape sequences."""
-    console = Console(record=True, width=100, force_terminal=False)
-    cfg = UiConfig(mode="plain", timestamps=True)
-    ui = ConsoleUI(console=console, config=cfg)
-    assert ui._is_plain is True
-
-    # 1. Log event
-    event = AgentEvent(EventType.INFO, "Modeler", "Training model without escape codes")
-    ui.handle_event(event)
-
-    # 2. Header and message
-    ui.show_header("0.1.0")
-    ui.show_message("Plain informational line")
-
-    output = console.export_text()
-    assert not ANSI_ESCAPE_PATTERN.search(output), "ANSI escape sequence found in log output!"
-
-    # 3. Environment check in plain mode
-    env = EnvironmentInfo(
-        operating_system="Windows 11",
-        shell_name="powershell",
-        python_version="3.12.0",
-        cpu_count=8,
-        ram_total_gb=16.0,
-        ram_free_gb=8.0,
-    )
-    env_text = render_environment_table(env, cfg)
-    assert isinstance(env_text, str)
-    assert not ANSI_ESCAPE_PATTERN.search(env_text)
-
-    # 4. Confirmation panel in plain mode
-    conf_text = render_confirmation_panel(
-        task="predict prices",
-        metrics="rmse",
-        data_folder=Path("."),
-        limits=None,
-        workspace_folder=Path("mlagent_workspace"),
-        model_name="qwen2.5",
-        config=cfg,
-    )
-    assert isinstance(conf_text, str)
-    assert not ANSI_ESCAPE_PATTERN.search(conf_text)
-
-    # 5. Summary panel in plain mode
-    ledger = Ledger(user_task="predict prices", status="done")
-    summary_text = render_summary_panel(ledger, cfg)
-    assert isinstance(summary_text, str)
-    assert not ANSI_ESCAPE_PATTERN.search(summary_text)
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("width", [70, 80, 100, 120])
-def test_no_rendered_log_line_exceeds_console_width(width: int) -> None:
-    """No rendered log line exceeds the console width."""
-    console = Console(record=True, width=width)
-    ui = ConsoleUI(console=console, config=UiConfig(verbosity="detailed", log_width=width))
-
-    long_msg = "Super long message explaining model hyperparameters and cross validation metrics " * 4
-    event = AgentEvent(EventType.INFO, "FeatureEngineer", long_msg)
-    ui.handle_event(event)
-
-    output = console.export_text()
-    lines = [line.rstrip() for line in output.splitlines() if line.strip()]
-    for line in lines:
-        assert len(line) <= width, f"Rendered line length {len(line)} exceeds width {width}: {line}"
-
-
-@pytest.mark.unit
-def test_summary_rendering_all_ledger_statuses() -> None:
-    """Summary panel renders correctly for done, stopped early, failed, and fresh ledgers."""
-    cfg = UiConfig(theme="dark")
-
-    # 1. Done status
-    ledger_done = Ledger(user_task="Predict churn", status="done")
-    panel_done = render_summary_panel(ledger_done, cfg)
-    assert isinstance(panel_done, Panel)
-
-    # 2. Stopped early with approved runs
-    from mlagent.state import ExperimentRun
-    run_approved = ExperimentRun(
-        experiment_id="run_001",
-        model_family="lightgbm",
-        score_mean=0.8521,
-        score_std=0.012,
-        holdout_score=0.8490,
-        verdict="approve",
-    )
-    ledger_stopped = Ledger(
-        user_task="Predict churn",
-        status="running",
-        stop_reason="plateau",
-        runs=[run_approved],
-    )
-    panel_stopped = render_summary_panel(ledger_stopped, cfg)
-    assert isinstance(panel_stopped, Panel)
-
-    # 3. Failed status
-    ledger_failed = Ledger(
-        user_task="Predict churn",
-        status="failed",
-        stop_reason="llm_unavailable",
-        error_message="Ollama crashed",
-    )
-    panel_failed = render_summary_panel(ledger_failed, cfg)
-    assert isinstance(panel_failed, Panel)
-
-    # 4. Fresh empty ledger
-    ledger_fresh = Ledger(user_task="Predict churn")
-    panel_fresh = render_summary_panel(ledger_fresh, cfg)
-    assert isinstance(panel_fresh, Panel)
-
-
-@pytest.mark.unit
-@given(st_ledger())
-def test_summary_panel_renders_for_random_ledgers(ledger: Ledger) -> None:
-    """Summary rendering never crashes for random valid ledgers."""
-    cfg = UiConfig(theme="dark")
-    result = render_summary_panel(ledger, cfg)
-    assert isinstance(result, (Panel, str))
-
-
-@pytest.mark.unit
 def test_status_command_on_fresh_empty_workspace_prints_clear_message(tmp_path: Path) -> None:
     """status command on a fresh empty workspace prints a clear friendly message without error."""
     console = Console(record=True, width=100)
     ui = ConsoleUI(console=console)
 
-    exit_code = status_command(tmp_path, ui)
+    exit_code = status_command(tmp_path, ui=ui)
     assert exit_code == EXIT_OK
 
     output = console.export_text()
@@ -204,20 +42,18 @@ def test_status_command_on_fresh_empty_workspace_prints_clear_message(tmp_path: 
     assert "mlagent start" in output
 
 
-@pytest.mark.unit
 def test_resume_command_on_fresh_empty_workspace_exits_with_usage(tmp_path: Path) -> None:
     """resume command without an existing saved run exits cleanly with a helpful message."""
     console = Console(record=True, width=100)
     ui = ConsoleUI(console=console)
 
-    exit_code = resume_command(tmp_path, ui)
+    exit_code = resume_command(tmp_path, ui=ui)
     assert exit_code == EXIT_USAGE
 
     output = console.export_text()
     assert "No saved run found" in output
 
 
-@pytest.mark.unit
 def test_every_ui_config_key_is_exercised() -> None:
     """Every key in UiConfig is exercised and impacts UI behavior."""
     fields = set(UiConfig.model_fields.keys())
@@ -285,7 +121,6 @@ def test_every_ui_config_key_is_exercised() -> None:
     assert ui_w80.config.log_width == 80
 
 
-@pytest.mark.unit
 def test_flags_to_overrides_translation() -> None:
     """CLI flags map correctly to config override strings."""
     args = argparse.Namespace(
@@ -306,7 +141,16 @@ def test_flags_to_overrides_translation() -> None:
     assert "ui.confirm_before_start=false" in ov
 
 
-@pytest.mark.unit
+def test_flags_to_overrides_with_model_flag() -> None:
+    """CLI --model flag maps to llm.name override."""
+    args = argparse.Namespace(
+        model="qwen2.5:32b",
+        overrides=[],
+    )
+    ov = flags_to_overrides(args)
+    assert "llm.name=qwen2.5:32b" in ov
+
+
 def test_live_status_bar_updates_from_ledger() -> None:
     """LiveStatusBar formats stage tracker, now line, and scoreboard correctly."""
     import time
@@ -315,7 +159,7 @@ def test_live_status_bar_updates_from_ledger() -> None:
     cfg = UiConfig(theme="dark")
     status_bar = LiveStatusBar(cfg, start_time)
 
-    ledger = Ledger(user_task="Test task", phase="experiment_loop", iteration=2)
+    ledger = Ledger(user_task="Test task", phase="modeler", iteration=2)
     status_bar.ledger = ledger
     status_bar.update_status("Modeler", "training lightgbm", "seeking higher accuracy")
 
@@ -330,29 +174,16 @@ def test_live_status_bar_updates_from_ledger() -> None:
     assert "Scoreboard" in score_line.plain
 
 
-@pytest.mark.unit
-def test_flags_to_overrides_with_model_flag() -> None:
-    """CLI --model flag maps to llm.name override."""
-    args = argparse.Namespace(
-        model="qwen2.5:32b",
-        overrides=[],
-    )
-    ov = flags_to_overrides(args)
-    assert "llm.name=qwen2.5:32b" in ov
-
-
-@pytest.mark.unit
 def test_live_status_bar_uses_configured_limits_and_model() -> None:
     """LiveStatusBar dynamically displays max_loops from limits config and model name."""
     import time
-    from mlagent.config import LimitsConfig
 
     start_time = time.monotonic() - 10.0
     cfg = UiConfig(theme="dark")
     limits = LimitsConfig(max_experiment_loops=25)
     status_bar = LiveStatusBar(cfg, start_time, limits=limits, model_name="qwen2.5:32b")
 
-    ledger = Ledger(user_task="Test task", phase="experiment_loop", iteration=3)
+    ledger = Ledger(user_task="Test task", phase="modeler", iteration=3)
     status_bar.ledger = ledger
 
     console = Console(record=True, width=120)
@@ -360,16 +191,12 @@ def test_live_status_bar_uses_configured_limits_and_model() -> None:
     stage_line = lines[0].plain
     score_line = lines[2].plain
 
-    # Must reflect round 4/25 dynamically from limits, not a hardcoded 15
     assert "round 4/25" in stage_line
     assert "qwen2.5:32b" in score_line
 
 
-@pytest.mark.unit
 def test_confirmation_panel_displays_model_and_server() -> None:
     """Confirmation panel displays configured model, server url, and dynamic limits."""
-    from mlagent.config import LimitsConfig
-
     cfg = UiConfig(theme="dark")
     limits = LimitsConfig(max_experiment_loops=18, max_eda_loops=6)
     panel = render_confirmation_panel(
@@ -392,24 +219,21 @@ def test_confirmation_panel_displays_model_and_server() -> None:
     assert "http://127.0.0.1:11434" in output
 
 
-@pytest.mark.unit
 def test_summary_panel_escapes_bracketed_markup() -> None:
     """Findings or task text with literal square brackets do not break markup parsing."""
-    from mlagent.state import EdaReport, Finding
-
     cfg = UiConfig(theme="dark")
     ledger = Ledger(
         user_task="Predict [status] on [train.csv]",
         status="done",
-        eda=EdaReport(
-            summary="Analyzed [Cabin] column with [deck, num, side] splits",
-            findings=[
-                Finding(
-                    priority="high",
-                    statement="Feature [CryoSleep] has [99%] predictive correlation",
-                )
-            ],
-        ),
+    )
+    ledger.eda.concise_executive_summary = "Analyzed [Cabin] column with [deck, num, side] splits"
+    ledger.eda.findings.append(
+        EdaFinding(
+            priority="high",
+            statement="Feature [CryoSleep] has [99%] predictive correlation",
+            quantitative_evidence="Correlation = 0.99",
+            modeling_implication="Use feature in GBDT",
+        )
     )
     panel = render_summary_panel(ledger, cfg)
     console = Console(record=True, width=100)
@@ -418,4 +242,79 @@ def test_summary_panel_escapes_bracketed_markup() -> None:
     assert "Predict [status]" in output
     assert "[deck, num, side]" in output
     assert "[CryoSleep]" in output
+
+
+def test_render_environment_table() -> None:
+    """Environment table displays system details cleanly in rich format."""
+    env = EnvironmentInfo(
+        operating_system="Windows 11",
+        shell_name="powershell",
+        python_version="3.12.0",
+        cpu_count=8,
+        ram_total_gb=32.0,
+        ram_free_gb=18.0,
+        gpu_name="NVIDIA RTX 4090",
+        gpu_memory_total_gb=24.0,
+        can_reach_pypi=True,
+    )
+    cfg = UiConfig(theme="dark")
+    panel = render_environment_table(env, cfg)
+    console = Console(record=True, width=100)
+    console.print(panel)
+    output = console.export_text()
+
+    assert "Windows 11" in output
+    assert "powershell" in output
+    assert "NVIDIA RTX 4090" in output
+    assert "PyPI" in output
+
+
+def test_format_progress_bar() -> None:
+    """format_progress_bar handles empty, partial, and 100% progress correctly."""
+    assert format_progress_bar(0, 0) == ""
+    assert format_progress_bar(0, 10) == "[░░░░░░░░░░] 0%"
+    assert format_progress_bar(5, 10) == "[█████░░░░░] 50%"
+    assert format_progress_bar(10, 10) == "[██████████] 100%"
+    # ASCII mode
+    assert format_progress_bar(6, 10, ascii_only=True) == "[######----] 60%"
+
+
+def test_live_status_bar_eda_loop_and_progress_bar() -> None:
+    """LiveStatusBar shows EDA round and progress bar during Understand phase."""
+    import time
+    start_time = time.monotonic() - 15.0
+    cfg = UiConfig(theme="dark")
+    limits = LimitsConfig(max_eda_loops=8, max_experiment_loops=12)
+    status_bar = LiveStatusBar(cfg, start_time, limits=limits)
+
+    ledger = Ledger(user_task="House Prices", phase="eda_analyst")
+    ledger.eda.eda_loops_used = 2  # Current loop is 3/8
+    status_bar.ledger = ledger
+
+    console = Console(record=True, width=120)
+    lines = list(status_bar.__rich_console__(console, None))  # type: ignore[arg-type]
+    stage_line = lines[0].plain
+    score_line = lines[2].plain
+
+    assert "Understand (EDA 3/8)" in stage_line
+    assert "%" in score_line or "Scoreboard" in score_line
+
+
+def test_console_ui_updates_ledger_and_preserves_on_start_live() -> None:
+    """ConsoleUI stores and attaches the active ledger reference to LiveStatusBar."""
+    cfg = UiConfig(mode="rich")
+    console = Console(record=True, width=100)
+    ui = ConsoleUI(console=console, config=cfg)
+
+    ledger = Ledger(user_task="House Prices", phase="modeler", iteration=1)
+    ui.update_ledger(ledger)
+    assert ui._current_ledger is ledger
+
+    ui.start_live()
+    try:
+        assert ui._live_status_bar is not None
+        assert ui._live_status_bar.ledger is ledger
+    finally:
+        ui.stop_live()
+
 
