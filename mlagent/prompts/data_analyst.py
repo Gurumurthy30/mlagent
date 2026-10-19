@@ -46,7 +46,8 @@ EDA_THINK_EXAMPLE = """\
 }\
 """
 
-EDA_PLAN_PROMPT = """\
+EDA_PLAN_PROMPT = (
+    """\
 <start_of_turn>user
 <role>
 You are the EDA Analyst agent in an autonomous ML engineering pipeline: a skeptical, evidence-driven data scientist.
@@ -88,7 +89,9 @@ Return only one JSON object matching this schema:
 }}
 
 Example:
-""" + EDA_THINK_EXAMPLE.replace("{", "{{").replace("}", "}}") + """
+"""
+    + EDA_THINK_EXAMPLE.replace("{", "{{").replace("}", "}}")
+    + """
 
 Return only the JSON object. Do not wrap the JSON in markdown fences. Do not write any text before or after the JSON.
 </output_format>
@@ -97,6 +100,7 @@ Return only the JSON object. Do not wrap the JSON in markdown fences. Do not wri
 <start_of_turn>model
 {{\
 """
+)
 
 # ---------------------------------------------------------------------------
 # 2. EDA Read (Script Output Interpretation)
@@ -142,7 +146,8 @@ EDA_READ_EXAMPLE = """\
 }\
 """
 
-EDA_READ_PROMPT = """\
+EDA_READ_PROMPT = (
+    """\
 <start_of_turn>user
 <role>
 You are the EDA Analyst agent in an autonomous ML engineering pipeline: a skeptical, evidence-driven data scientist who trusts measured numbers over assumptions.
@@ -187,7 +192,9 @@ Return only one JSON object matching this schema:
 }}
 
 Example:
-""" + EDA_READ_EXAMPLE.replace("{", "{{").replace("}", "}}") + """
+"""
+    + EDA_READ_EXAMPLE.replace("{", "{{").replace("}", "}}")
+    + """
 
 Return only the JSON object. Do not wrap the JSON in markdown fences. Do not write any text before or after the JSON.
 </output_format>
@@ -196,6 +203,7 @@ Return only the JSON object. Do not wrap the JSON in markdown fences. Do not wri
 <start_of_turn>model
 {{\
 """
+)
 
 # ---------------------------------------------------------------------------
 # 3. EDA Blueprint (Synthesis & Preprocessing Roadmap)
@@ -274,7 +282,8 @@ EDA_BLUEPRINT_EXAMPLE = """\
 }\
 """
 
-EDA_BLUEPRINT_PROMPT = """\
+EDA_BLUEPRINT_PROMPT = (
+    """\
 <start_of_turn>user
 <role>
 You are the EDA Analyst agent in an autonomous ML engineering pipeline: a skeptical, evidence-driven data scientist.
@@ -346,7 +355,9 @@ Return only one JSON object matching this schema:
 }}
 
 Example:
-""" + EDA_BLUEPRINT_EXAMPLE.replace("{", "{{").replace("}", "}}") + """
+"""
+    + EDA_BLUEPRINT_EXAMPLE.replace("{", "{{").replace("}", "}}")
+    + """
 
 Return only the JSON object. Do not wrap the JSON in markdown fences. Do not write any text before or after the JSON.
 </output_format>
@@ -355,3 +366,4 @@ Return only the JSON object. Do not wrap the JSON in markdown fences. Do not wri
 <start_of_turn>model
 {{\
 """
+)

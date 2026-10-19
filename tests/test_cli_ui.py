@@ -67,7 +67,9 @@ def test_every_ui_config_key_is_exercised() -> None:
         "ascii_only",
         "log_width",
     }
-    assert expected_fields.issubset(fields), f"Missing fields in UiConfig: {expected_fields - fields}"
+    assert expected_fields.issubset(fields), (
+        f"Missing fields in UiConfig: {expected_fields - fields}"
+    )
 
     # 1. mode
     cfg_plain = UiConfig(mode="plain")
@@ -282,6 +284,7 @@ def test_format_progress_bar() -> None:
 def test_live_status_bar_eda_loop_and_progress_bar() -> None:
     """LiveStatusBar shows EDA round and progress bar during Understand phase."""
     import time
+
     start_time = time.monotonic() - 15.0
     cfg = UiConfig(theme="dark")
     limits = LimitsConfig(max_eda_loops=8, max_experiment_loops=12)
@@ -389,6 +392,7 @@ def test_live_status_bar_transitions_through_all_phases() -> None:
 
     # 6. ML Lead Strategist for round 2 (should NOT go back to Plan)
     from mlagent.graph.state import ExperimentRun
+
     ledger.phase = "ml_lead"
     ledger.iteration = 1
     ledger.runs.append(
@@ -409,6 +413,3 @@ def test_live_status_bar_transitions_through_all_phases() -> None:
     lines = list(status_bar.__rich_console__(console, None))  # type: ignore[arg-type]
     assert "Deliver" in lines[0].plain
     assert "Complete" in lines[2].plain
-
-
-

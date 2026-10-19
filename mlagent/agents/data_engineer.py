@@ -63,7 +63,7 @@ def _profile_tabular_file(file_path: Path, size_mb: float) -> tuple[int, int, li
         if file_path.suffix.lower() in [".csv", ".tsv"]:
             df_sample = pd.read_csv(file_path, sep=sep, nrows=1000)
             col_count = len(df_sample.columns)
-            
+
             # Quick estimate of total row count for files under 100MB
             if size_mb < 100.0:
                 with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -85,12 +85,12 @@ def _profile_tabular_file(file_path: Path, size_mb: float) -> tuple[int, int, li
             missing_pct = float(missing_count / len(series)) if len(series) > 0 else 0.0
             unique_count = int(series.nunique(dropna=True))
             sample_vals = [str(v) for v in series.dropna().head(3).tolist()]
-            
+
             min_val = None
             max_val = None
             mean_val = None
             std_val = None
-            
+
             # Extract basic numeric statistics if series is float or int
             if pd.api.types.is_numeric_dtype(series) and not pd.api.types.is_bool_dtype(series):
                 cleaned = series.dropna()
@@ -168,7 +168,7 @@ def profile_data_folder(project_folder: Path) -> DatasetProfile:
         if suffix in [".csv", ".tsv", ".parquet"]:
             kind = "table"
             row_count, col_count, columns = _profile_tabular_file(item, size_mb)
-            
+
             # Track train and test column sets
             col_names = {c.name for c in columns}
             if inferred_role == "train":
@@ -196,7 +196,9 @@ def profile_data_folder(project_folder: Path) -> DatasetProfile:
 
     # Compute column set differences
     train_minus_test = sorted(list(train_columns - test_columns)) if test_columns else []
-    shared_cols = sorted(list(train_columns & test_columns)) if test_columns else sorted(list(train_columns))
+    shared_cols = (
+        sorted(list(train_columns & test_columns)) if test_columns else sorted(list(train_columns))
+    )
 
     return DatasetProfile(
         project_folder=str(project_folder),
@@ -210,13 +212,15 @@ def profile_data_folder(project_folder: Path) -> DatasetProfile:
 def run_data_engineer(ledger: Ledger, agent_context: AgentContext) -> ProjectScope:
     # Execute Stage 1 and Stage 2 Data Engineer agent
     event_bus = agent_context.event_bus
-    event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, "analyzing project data folder", ledger=ledger)
+    event_bus.emit(
+        EventType.AGENT_STARTED, AGENT_NAME, "analyzing project data folder", ledger=ledger
+    )
 
     project_folder = agent_context.workspace.project_folder
-    
+
     # 1. Deterministic profile computation
     profile = profile_data_folder(project_folder)
-    
+
     # 2. Build profile text for prompt
     profile_summary_lines = [
         f"Scanned files count: {len(profile.files)}",

@@ -172,7 +172,9 @@ def run_evaluator(ledger: Ledger, agent_context: AgentContext) -> EvaluationVerd
             system_message=EVALUATOR_ROLE,
         )
     except Exception as exc:
-        raise AgentFailedError(f"Evaluator structured audit failed for {run.experiment_id}: {exc}") from exc
+        raise AgentFailedError(
+            f"Evaluator structured audit failed for {run.experiment_id}: {exc}"
+        ) from exc
 
     # 2.5 Authoritative Python Mathematical Decision
     if hard_failures:
@@ -186,16 +188,23 @@ def run_evaluator(ledger: Ledger, agent_context: AgentContext) -> EvaluationVerd
             determined_verdict = "approve"
             # Clear spurious rejection reasons from LLM regarding zero gain on baseline
             verdict.rejection_reasons = [
-                r for r in verdict.rejection_reasons
-                if not any(k in r.lower() for k in ["no gain", "gain <=", "zero gain", "missing holdout", "unverified"])
+                r
+                for r in verdict.rejection_reasons
+                if not any(
+                    k in r.lower()
+                    for k in ["no gain", "gain <=", "zero gain", "missing holdout", "unverified"]
+                )
             ]
     else:
         # Challenger must beat Champion CV score under primary metric and not severely overfit
         if beats_champ_metric and verdict.overfitting_status != "severe_overfit":
             determined_verdict = "approve"
             verdict.rejection_reasons = [
-                r for r in verdict.rejection_reasons
-                if not any(k in r.lower() for k in ["no gain", "gain <=", "zero gain", "missing holdout"])
+                r
+                for r in verdict.rejection_reasons
+                if not any(
+                    k in r.lower() for k in ["no gain", "gain <=", "zero gain", "missing holdout"]
+                )
             ]
         else:
             determined_verdict = "reject"
@@ -204,7 +213,9 @@ def run_evaluator(ledger: Ledger, agent_context: AgentContext) -> EvaluationVerd
                     f"Candidate CV ({run.cv_mean:.4f}) did not beat Champion CV ({champion.cv_mean:.4f}). "
                     f"Gain: {gain_vs_champ:+.4f}."
                 )
-                if not any("gain" in r.lower() or "beat" in r.lower() for r in verdict.rejection_reasons):
+                if not any(
+                    "gain" in r.lower() or "beat" in r.lower() for r in verdict.rejection_reasons
+                ):
                     verdict.rejection_reasons.append(no_gain_msg)
 
     verdict.verdict = determined_verdict
@@ -257,8 +268,7 @@ def run_evaluator(ledger: Ledger, agent_context: AgentContext) -> EvaluationVerd
     if promoted:
         champ_cv = run.cv_mean if run.cv_mean is not None else 0.0
         champ_summary = (
-            f"Champion: {run.experiment_id} (FV {run.feature_version}) "
-            f"CV={champ_cv:.4f} promoted."
+            f"Champion: {run.experiment_id} (FV {run.feature_version}) CV={champ_cv:.4f} promoted."
         )
         champ_card = ChampionPointerCard(
             tag="champion_pointer",

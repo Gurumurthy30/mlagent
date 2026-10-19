@@ -12,6 +12,7 @@ dependencies = [
     # Agent engine
     "langgraph>=1.2,<2",
     "langchain-ollama>=1.1,<2",
+    "langchain-nvidia-ai-endpoints>=1.5",
     "ollama>=0.6,<1",
     "httpx>=0.28,<1",
     "pydantic>=2.14,<3",

@@ -86,7 +86,9 @@ def generate_splits_file(
             train_file = csv_files[0]
 
     if not train_file or not train_file.exists():
-        raise AgentFailedError(f"Cannot generate splits: no training data found in {project_folder}")
+        raise AgentFailedError(
+            f"Cannot generate splits: no training data found in {project_folder}"
+        )
 
     # Read training file to extract row index and split metadata
     sep = "\t" if train_file.suffix.lower() == ".tsv" else ","
@@ -111,7 +113,10 @@ def generate_splits_file(
         if stratify_target is not None:
             try:
                 cv_idx, hold_idx = train_test_split(
-                    example_ids, test_size=n_holdout, stratify=stratify_target, random_state=RANDOM_SEED
+                    example_ids,
+                    test_size=n_holdout,
+                    stratify=stratify_target,
+                    random_state=RANDOM_SEED,
                 )
             except Exception:
                 cv_idx, hold_idx = train_test_split(
@@ -137,7 +142,11 @@ def generate_splits_file(
         for fold, (_, val_pos) in enumerate(gkf.split(cv_idx, groups=groups)):
             for pos in val_pos:
                 fold_of_example[cv_idx[pos]] = fold
-    elif scheme == "stratified_group_kfold" and plan.split_column in df.columns and stratify_target is not None:
+    elif (
+        scheme == "stratified_group_kfold"
+        and plan.split_column in df.columns
+        and stratify_target is not None
+    ):
         groups = df.loc[cv_idx, plan.split_column].to_numpy()
         y_cv = df.loc[cv_idx, target_col].to_numpy()
         sgkf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=RANDOM_SEED)
@@ -187,7 +196,12 @@ def generate_splits_file(
 def run_ml_lead_round_0(ledger: Ledger, agent_context: AgentContext) -> ValidationPlan:
     # Plan validation protocol and initialize Tier-1 baseline hypothesis via MemoryAssembler
     event_bus = agent_context.event_bus
-    event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, "locking validation protocol for Round 0", ledger=ledger)
+    event_bus.emit(
+        EventType.AGENT_STARTED,
+        AGENT_NAME,
+        "locking validation protocol for Round 0",
+        ledger=ledger,
+    )
 
     store = MemoryStore(agent_context.workspace.root)
     assembler = MemoryAssembler(store)
@@ -231,7 +245,9 @@ def run_ml_lead_round_0(ledger: Ledger, agent_context: AgentContext) -> Validati
         hypothesis_statement=plan.baseline_hypothesis_statement,
         target_model_family=plan.baseline_model_family,
         model_complexity_tier="tier_1_simple_baseline",
-        model_instructions=["Train Tier-1 simple baseline model using Stage 3 preprocessed features"],
+        model_instructions=[
+            "Train Tier-1 simple baseline model using Stage 3 preprocessed features"
+        ],
     )
     ledger.hypotheses.append(baseline_hyp)
 
@@ -298,7 +314,9 @@ def run_ml_lead_hypothesis(ledger: Ledger, agent_context: AgentContext) -> Hypot
             system_message=ML_LEAD_ROLE,
         )
     except Exception as exc:
-        raise AgentFailedError(f"Hypothesis formulation failed in iteration {iteration}: {exc}") from exc
+        raise AgentFailedError(
+            f"Hypothesis formulation failed in iteration {iteration}: {exc}"
+        ) from exc
 
     # Record newly formulated hypothesis
     hyp_id = ledger.next_hypothesis_id()

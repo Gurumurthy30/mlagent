@@ -128,7 +128,9 @@ class ConsoleUI:
     def _truncate_status_message(self, message: str, max_length: int | None = None) -> str:
         """Truncate active status message cleanly with ellipses to avoid terminal frame distortion."""
         if max_length is None:
-            width = self.console.width if self.console and self.console.width else self.config.log_width
+            width = (
+                self.console.width if self.console and self.console.width else self.config.log_width
+            )
             # Reserve space for Stage/Now prefix, agent name, and elapsed duration
             max_length = max(35, width - 40)
         clean = message.replace("\r", " ").replace("\n", " ").strip()
@@ -196,9 +198,7 @@ class ConsoleUI:
 
     def _format_event_line(self, event: AgentEvent) -> Text:
         """Construct fixed-column log line with hanging indent and theme styling."""
-        label_info = LABEL_AND_STYLE_BY_EVENT_TYPE.get(
-            event.event_type, ("INFO", "info", "text")
-        )
+        label_info = LABEL_AND_STYLE_BY_EVENT_TYPE.get(event.event_type, ("INFO", "info", "text"))
         label_text, _, style_key = label_info
 
         line = Text()
@@ -219,7 +219,9 @@ class ConsoleUI:
 
         # Column 3: Agent
         agent_col = f"{event.agent_name:<18} "
-        agent_style = self.theme.text if self.theme.text.startswith("bold") else f"bold {self.theme.text}"
+        agent_style = (
+            self.theme.text if self.theme.text.startswith("bold") else f"bold {self.theme.text}"
+        )
         line.append(agent_col, style=agent_style)
         prefix_len += len(agent_col)
 
@@ -268,7 +270,9 @@ class ConsoleUI:
     def ask_text(self, question: str) -> str:
         """Prompt user for free-form input."""
         with self._lock:
-            return Prompt.ask(question, default="", show_default=False, console=self.console).strip()
+            return Prompt.ask(
+                question, default="", show_default=False, console=self.console
+            ).strip()
 
     def ask_required_task(self, question: str) -> str:
         """Prompt for task and reject empty with a friendly message."""

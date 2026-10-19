@@ -69,7 +69,10 @@ class MemoryAssembler:
                     card_id="brief_initial",
                     owner="data_engineer",
                     memory_summary=f"Task: {ledger.brief.enhanced_problem_statement} | Metric: {ledger.brief.primary_metric}",
-                    payload={"task": ledger.brief.enhanced_problem_statement, "metric": ledger.brief.primary_metric},
+                    payload={
+                        "task": ledger.brief.enhanced_problem_statement,
+                        "metric": ledger.brief.primary_metric,
+                    },
                 )
             )
 
@@ -93,7 +96,9 @@ class MemoryAssembler:
             prep = self.store.load_latest("prep_spec")
             if prep:
                 cards.append(prep)
-            high_findings = self.store.load_cards("eda_finding", limit=15, filters={"priority": "high"})
+            high_findings = self.store.load_cards(
+                "eda_finding", limit=15, filters={"priority": "high"}
+            )
             cards.extend(high_findings)
 
         elif agent_name == "ml_lead":
@@ -190,10 +195,12 @@ class MemoryAssembler:
 
         return cards
 
-    def _apply_priority_tiering(self, cards: list[MemoryCard], max_cards: int = 40) -> list[MemoryCard]:
+    def _apply_priority_tiering(
+        self, cards: list[MemoryCard], max_cards: int = 40
+    ) -> list[MemoryCard]:
         # Order by priority tier: core -> high -> medium -> low
         priority_order = {"core": 0, "high": 1, "medium": 2, "low": 3}
-        
+
         # Deduplicate while preserving order
         seen_ids: set[str] = set()
         unique_cards: list[MemoryCard] = []
@@ -230,7 +237,9 @@ class MemoryAssembler:
         schema_hint: str = "",
     ) -> str:
         # Build delimited prompt with <system>, <memory>, <task>, <schema>
-        charter = AGENT_CHARTERS.get(agent_name, "You are a professional machine learning engineering agent.")
+        charter = AGENT_CHARTERS.get(
+            agent_name, "You are a professional machine learning engineering agent."
+        )
 
         # 1. Collect and filter cards
         raw_cards = self._select_cards_for_agent(agent_name, ledger)
@@ -238,7 +247,9 @@ class MemoryAssembler:
 
         # 2. Render cards to Markdown
         rendered_cards = [self.render_card(c) for c in tiered_cards]
-        memory_section = "\n\n".join(rendered_cards) if rendered_cards else "No previous memory cards recorded."
+        memory_section = (
+            "\n\n".join(rendered_cards) if rendered_cards else "No previous memory cards recorded."
+        )
 
         # Add round summary table for ML Lead and Summarizer
         if agent_name in ("ml_lead", "summarizer"):

@@ -47,8 +47,7 @@ def is_counted_gain(
         return False
     # Filter non-finite numbers
     valid_pairs = [
-        (n, b) for n, b in zip(new_scores, base_scores)
-        if math.isfinite(n) and math.isfinite(b)
+        (n, b) for n, b in zip(new_scores, base_scores) if math.isfinite(n) and math.isfinite(b)
     ]
     # Need at least one valid split
     if not valid_pairs:
@@ -79,31 +78,129 @@ class MetricRegistry:
     # Built-in metric specifications
     SPECS: dict[str, MetricSpec] = {
         # Classification
-        "accuracy": MetricSpec("accuracy", "maximize", "labels", ["binary_classification", "multiclass_classification"], "Accuracy score"),
-        "f1": MetricSpec("f1", "maximize", "labels", ["binary_classification", "multiclass_classification", "multilabel_classification"], "F1 score"),
-        "f1_macro": MetricSpec("f1_macro", "maximize", "labels", ["binary_classification", "multiclass_classification"], "Macro-averaged F1 score"),
-        "f1_micro": MetricSpec("f1_micro", "maximize", "labels", ["multiclass_classification", "multilabel_classification"], "Micro-averaged F1 score"),
-        "roc_auc": MetricSpec("roc_auc", "maximize", "probabilities", ["binary_classification", "multiclass_classification", "anomaly_detection"], "Area under ROC curve"),
-        "pr_auc": MetricSpec("pr_auc", "maximize", "probabilities", ["binary_classification", "anomaly_detection"], "Area under Precision-Recall curve"),
-        "log_loss": MetricSpec("log_loss", "minimize", "probabilities", ["binary_classification", "multiclass_classification"], "Cross-entropy loss"),
-        "precision": MetricSpec("precision", "maximize", "labels", ["binary_classification", "multiclass_classification"], "Precision score"),
-        "recall": MetricSpec("recall", "maximize", "labels", ["binary_classification", "multiclass_classification"], "Recall score"),
+        "accuracy": MetricSpec(
+            "accuracy",
+            "maximize",
+            "labels",
+            ["binary_classification", "multiclass_classification"],
+            "Accuracy score",
+        ),
+        "f1": MetricSpec(
+            "f1",
+            "maximize",
+            "labels",
+            ["binary_classification", "multiclass_classification", "multilabel_classification"],
+            "F1 score",
+        ),
+        "f1_macro": MetricSpec(
+            "f1_macro",
+            "maximize",
+            "labels",
+            ["binary_classification", "multiclass_classification"],
+            "Macro-averaged F1 score",
+        ),
+        "f1_micro": MetricSpec(
+            "f1_micro",
+            "maximize",
+            "labels",
+            ["multiclass_classification", "multilabel_classification"],
+            "Micro-averaged F1 score",
+        ),
+        "roc_auc": MetricSpec(
+            "roc_auc",
+            "maximize",
+            "probabilities",
+            ["binary_classification", "multiclass_classification", "anomaly_detection"],
+            "Area under ROC curve",
+        ),
+        "pr_auc": MetricSpec(
+            "pr_auc",
+            "maximize",
+            "probabilities",
+            ["binary_classification", "anomaly_detection"],
+            "Area under Precision-Recall curve",
+        ),
+        "log_loss": MetricSpec(
+            "log_loss",
+            "minimize",
+            "probabilities",
+            ["binary_classification", "multiclass_classification"],
+            "Cross-entropy loss",
+        ),
+        "precision": MetricSpec(
+            "precision",
+            "maximize",
+            "labels",
+            ["binary_classification", "multiclass_classification"],
+            "Precision score",
+        ),
+        "recall": MetricSpec(
+            "recall",
+            "maximize",
+            "labels",
+            ["binary_classification", "multiclass_classification"],
+            "Recall score",
+        ),
         # Regression
-        "rmse": MetricSpec("rmse", "minimize", "continuous", ["regression", "time_series_forecasting"], "Root Mean Squared Error"),
-        "mae": MetricSpec("mae", "minimize", "continuous", ["regression", "time_series_forecasting"], "Mean Absolute Error"),
-        "r2": MetricSpec("r2", "maximize", "continuous", ["regression"], "R-squared coefficient of determination"),
-        "mape": MetricSpec("mape", "minimize", "continuous", ["regression", "time_series_forecasting"], "Mean Absolute Percentage Error"),
+        "rmse": MetricSpec(
+            "rmse",
+            "minimize",
+            "continuous",
+            ["regression", "time_series_forecasting"],
+            "Root Mean Squared Error",
+        ),
+        "mae": MetricSpec(
+            "mae",
+            "minimize",
+            "continuous",
+            ["regression", "time_series_forecasting"],
+            "Mean Absolute Error",
+        ),
+        "r2": MetricSpec(
+            "r2", "maximize", "continuous", ["regression"], "R-squared coefficient of determination"
+        ),
+        "mape": MetricSpec(
+            "mape",
+            "minimize",
+            "continuous",
+            ["regression", "time_series_forecasting"],
+            "Mean Absolute Percentage Error",
+        ),
         # Clustering
-        "silhouette": MetricSpec("silhouette", "maximize", "clustering_embeddings", ["clustering"], "Silhouette score"),
-        "davies_bouldin": MetricSpec("davies_bouldin", "minimize", "clustering_embeddings", ["clustering"], "Davies-Bouldin index"),
-        "calinski_harabasz": MetricSpec("calinski_harabasz", "maximize", "clustering_embeddings", ["clustering"], "Calinski-Harabasz score"),
+        "silhouette": MetricSpec(
+            "silhouette", "maximize", "clustering_embeddings", ["clustering"], "Silhouette score"
+        ),
+        "davies_bouldin": MetricSpec(
+            "davies_bouldin",
+            "minimize",
+            "clustering_embeddings",
+            ["clustering"],
+            "Davies-Bouldin index",
+        ),
+        "calinski_harabasz": MetricSpec(
+            "calinski_harabasz",
+            "maximize",
+            "clustering_embeddings",
+            ["clustering"],
+            "Calinski-Harabasz score",
+        ),
         # Ranking
-        "ndcg": MetricSpec("ndcg", "maximize", "ranked_lists", ["ranking"], "Normalized Discounted Cumulative Gain"),
+        "ndcg": MetricSpec(
+            "ndcg", "maximize", "ranked_lists", ["ranking"], "Normalized Discounted Cumulative Gain"
+        ),
         "map": MetricSpec("map", "maximize", "ranked_lists", ["ranking"], "Mean Average Precision"),
         "mrr": MetricSpec("mrr", "maximize", "ranked_lists", ["ranking"], "Mean Reciprocal Rank"),
         # Multilabel & Anomaly
-        "hamming_loss": MetricSpec("hamming_loss", "minimize", "labels", ["multilabel_classification"], "Hamming loss"),
-        "precision_at_k": MetricSpec("precision_at_k", "maximize", "probabilities", ["anomaly_detection", "ranking"], "Precision at top K"),
+        "hamming_loss": MetricSpec(
+            "hamming_loss", "minimize", "labels", ["multilabel_classification"], "Hamming loss"
+        ),
+        "precision_at_k": MetricSpec(
+            "precision_at_k",
+            "maximize",
+            "probabilities",
+            ["anomaly_detection", "ranking"],
+            "Precision at top K",
+        ),
     }
 
     @classmethod
@@ -114,7 +211,9 @@ class MetricRegistry:
         if key in cls.SPECS:
             return cls.SPECS[key]
         # Infer direction if unknown
-        higher_is_better = not any(term in key for term in ("loss", "error", "mse", "mae", "rmse", "bouldin", "hamming"))
+        higher_is_better = not any(
+            term in key for term in ("loss", "error", "mse", "mae", "rmse", "bouldin", "hamming")
+        )
         direction: MetricDirection = "maximize" if higher_is_better else "minimize"
         return MetricSpec(key, direction, "continuous", ["general"], "Custom metric")
 

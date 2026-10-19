@@ -148,12 +148,15 @@ def test_summarizer_produces_all_8_required_readme_sections(tmp_path: Path) -> N
 
 def test_align_and_save_predictions_uses_target_and_1_to_n_ids(tmp_path: Path) -> None:
     import pandas as pd
+
     from mlagent.agents.finalizer import _align_and_save_predictions
     from mlagent.graph.state import ProjectBrief
 
     # Scenario 1: No sample submission, input has 0-indexed IDs and 'prediction' column
     src_csv = tmp_path / "raw_preds.csv"
-    pd.DataFrame({"id": [0, 1, 2, 3], "prediction": [10.5, 20.1, 15.3, 30.0]}).to_csv(src_csv, index=False)
+    pd.DataFrame({"id": [0, 1, 2, 3], "prediction": [10.5, 20.1, 15.3, 30.0]}).to_csv(
+        src_csv, index=False
+    )
 
     dest_1 = tmp_path / "out1" / "predictions.csv"
     dest_2 = tmp_path / "report" / "predictions.csv"
@@ -181,6 +184,7 @@ def test_align_and_save_predictions_uses_target_and_1_to_n_ids(tmp_path: Path) -
 
     # Scenario 2: With sample submission (e.g. Digit Recognizer: ImageId, Label)
     from mlagent.graph.state import DatasetProfile, FileProfile
+
     sample_sub = tmp_path / "sample_submission.csv"
     pd.DataFrame({"ImageId": [1, 2, 3], "Label": [0, 0, 0]}).to_csv(sample_sub, index=False)
     brief.profile = DatasetProfile(
@@ -247,3 +251,41 @@ def test_summarizer_reads_cards_from_store_not_raw_ledger(tmp_path: Path) -> Non
     assert "From memory store brief." in prompt_sent
     assert "<memory>" in prompt_sent
     assert "<task>" in prompt_sent
+
+
+def test_summarizer_fallback_on_llm_failure(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path)
+    workspace.create_folders()
+
+    store = MemoryStore(workspace.root)
+    store.append_card(
+        ProjectBriefCard(
+            card_id="project_brief",
+            owner="data_engineer",
+            memory_summary="Housing price prediction.",
+            payload={"task": "House prices", "primary_metric": "rmse"},
+        )
+    )
+
+    mock_llm = MagicMock()
+    mock_llm.ask_structured.side_effect = RuntimeError("Structured JSON failed")
+    mock_llm.ask_text.side_effect = RuntimeError("Text generation failed")
+
+    context = AgentContext(
+        config=AppConfig(),
+        workspace=workspace,
+        event_bus=EventBus(),
+        llm_client=mock_llm,
+        code_runner=MagicMock(),
+        environment=MagicMock(),
+    )
+
+    ledger = Ledger()
+    output = run_summarizer(ledger, context)
+
+    readme_path = workspace.root / "README.md"
+    assert readme_path.exists()
+    content = readme_path.read_text(encoding="utf-8")
+    assert "# 1. Problem & Data" in content
+    assert "# 8. Reproduction" in content
+    assert "README.md" in output.cli_summary

@@ -125,6 +125,7 @@ def run_feature_engineer(ledger: Ledger, agent_context: AgentContext) -> Feature
         fallback_test = features_folder / f"test_{script_name}"
         if fallback_test.exists():
             import shutil
+
             shutil.copy2(fallback_test, target_script_path)
 
     output_cols: list[str] = []

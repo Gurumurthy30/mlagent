@@ -82,10 +82,12 @@ def extract_dataset_columns(ledger: Ledger, project_folder: Path) -> str:
                 try:
                     if p.suffix == ".csv":
                         import pandas as pd
+
                         df = pd.read_csv(p, nrows=2)
                         return ", ".join(list(df.columns)[:80])
                     elif p.suffix == ".parquet":
                         import pandas as pd
+
                         df = pd.read_parquet(p)
                         return ", ".join(list(df.columns)[:80])
                 except Exception:
@@ -93,6 +95,7 @@ def extract_dataset_columns(ledger: Ledger, project_folder: Path) -> str:
         for p in project_folder.glob("*.csv"):
             try:
                 import pandas as pd
+
                 df = pd.read_csv(p, nrows=2)
                 return ", ".join(list(df.columns)[:80])
             except Exception:
@@ -105,6 +108,7 @@ def extract_dataset_columns(ledger: Ledger, project_folder: Path) -> str:
             return ", ".join(cols[:80])
 
     return "See dataset files in project data directory."
+
 
 @dataclass
 class CodeBlock:
@@ -194,9 +198,7 @@ def execute_code_blocks(
     shell_blocks = [b for b in code_blocks if b.language in SHELL_LANGUAGES]
 
     if len(python_blocks) != 1:
-        return build_failure(
-            f"Expected exactly one ```python block, found {len(python_blocks)}."
-        )
+        return build_failure(f"Expected exactly one ```python block, found {len(python_blocks)}.")
 
     for shell_block in shell_blocks:
         agent_context.event_bus.emit(
@@ -285,7 +287,11 @@ def run_coder(
         code_blocks = extract_code_blocks(answer_text)
 
         lookup_names = collect_lookup_names(code_blocks)
-        if lookup_names and all(b.language == LOOKUP_LANGUAGE for b in code_blocks) and lookups_left > 0:
+        if (
+            lookup_names
+            and all(b.language == LOOKUP_LANGUAGE for b in code_blocks)
+            and lookups_left > 0
+        ):
             names_to_lookup = lookup_names[:lookups_left]
             lookups_left -= len(names_to_lookup)
             history_entries.append(
@@ -313,14 +319,22 @@ def run_coder(
                 "You must change your approach:\n"
             )
             err_lower = error_line.lower()
-            if "feature names" in err_lower or "unseen at fit time" in err_lower or "missing" in err_lower:
+            if (
+                "feature names" in err_lower
+                or "unseen at fit time" in err_lower
+                or "missing" in err_lower
+            ):
                 hint += (
                     "- Feature name mismatch detected! Call: X_va = X_va.reindex(columns=X_tr.columns, fill_value=0.0) "
                     "and X_test = X_test.reindex(columns=X_full.columns, fill_value=0.0)\n"
                 )
             if "early stopping" in err_lower or "validation dataset" in err_lower:
                 hint += "- Early stopping error! When using GBDT early stopping, provide eval_set=[(X_va, y_va)] to .fit(), or remove early_stopping.\n"
-            if "isinf" in err_lower or "isnan" in err_lower or "could not convert string" in err_lower:
+            if (
+                "isinf" in err_lower
+                or "isnan" in err_lower
+                or "could not convert string" in err_lower
+            ):
                 hint += (
                     "- Non-numeric columns detected in matrix! Encode categorical columns with pd.get_dummies, "
                     "drop target/id, and call df.fillna(0.0) instead of np.isinf on string columns.\n"

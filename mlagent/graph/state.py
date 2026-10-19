@@ -145,7 +145,9 @@ class FileProfile(BaseModel):
     path: str
     size_mb: float = 0.0
     kind: Literal["table", "image_dir", "audio_dir", "text_corpus", "document", "other"] = "table"
-    inferred_role: Literal["train", "test", "sample_submission", "description", "auxiliary", "other"] = "other"
+    inferred_role: Literal[
+        "train", "test", "sample_submission", "description", "auxiliary", "other"
+    ] = "other"
     row_count: int = 0
     col_count: int = 0
     duplicate_row_count: int = 0
@@ -169,20 +171,34 @@ class ProjectScope(BaseModel):
 
     thinking: str = Field(description="Analysis of user requirements and dataset files.")
     cli_summary: str = Field(description="Crisp 1-3 line summary formatted for terminal display.")
-    enhanced_problem_statement: str = Field(description="Actionable formulation of what to predict and optimize.")
+    enhanced_problem_statement: str = Field(
+        description="Actionable formulation of what to predict and optimize."
+    )
     modality: Modality
     task_family: TaskFamily
-    target_column: str = Field(default="", description="Target column in training data, or empty if unsupervised.")
+    target_column: str = Field(
+        default="", description="Target column in training data, or empty if unsupervised."
+    )
     id_columns: list[str] = Field(default_factory=list)
-    group_columns: list[str] = Field(default_factory=list, description="Entity or customer group identifier columns.")
-    time_columns: list[str] = Field(default_factory=list, description="Timestamp or temporal ordering columns.")
+    group_columns: list[str] = Field(
+        default_factory=list, description="Entity or customer group identifier columns."
+    )
+    time_columns: list[str] = Field(
+        default_factory=list, description="Timestamp or temporal ordering columns."
+    )
     text_columns: list[str] = Field(default_factory=list)
     primary_metric: str = Field(description="Primary optimization metric.")
     higher_is_better: bool = True
-    secondary_metrics: list[str] = Field(default_factory=list, description="Diagnostic companion metrics.")
-    deliverable_format: str = Field(description="Expected predictions output format and column names.")
+    secondary_metrics: list[str] = Field(
+        default_factory=list, description="Diagnostic companion metrics."
+    )
+    deliverable_format: str = Field(
+        description="Expected predictions output format and column names."
+    )
     data_sufficiency_and_risks: list[str] = Field(default_factory=list)
-    initial_eda_questions: list[str] = Field(default_factory=list, description="Top questions to seed EDA.")
+    initial_eda_questions: list[str] = Field(
+        default_factory=list, description="Top questions to seed EDA."
+    )
 
 
 # Locked project brief stored inside Ledger
@@ -211,7 +227,9 @@ class EdaQuestionPlan(BaseModel):
 
     thinking: str = Field(description="Assessment of current findings and open data questions.")
     cli_summary: str = Field(description="Crisp 1-3 line summary formatted for terminal display.")
-    questions_to_test: list[str] = Field(description="1 to 5 quantitative questions for this EDA script.")
+    questions_to_test: list[str] = Field(
+        description="1 to 5 quantitative questions for this EDA script."
+    )
 
 
 # Single quantitative finding draft
@@ -219,8 +237,12 @@ class EdaFindingDraft(BaseModel):
     """Quantitative pattern or anomaly observed during EDA."""
 
     statement: str = Field(description="What pattern or anomaly was found.")
-    quantitative_evidence: str = Field(description="Exact numbers, distributions, or statistical values.")
-    modeling_implication: str = Field(description="Impact on preprocessing, split strategy, or feature design.")
+    quantitative_evidence: str = Field(
+        description="Exact numbers, distributions, or statistical values."
+    )
+    modeling_implication: str = Field(
+        description="Impact on preprocessing, split strategy, or feature design."
+    )
     priority: Priority = "medium"
 
 
@@ -240,7 +262,9 @@ class EdaFindingsSummary(BaseModel):
     cli_summary: str = Field(description="Crisp 1-3 line summary formatted for terminal display.")
     new_findings: list[EdaFindingDraft] = Field(default_factory=list)
     unresolved_questions: list[str] = Field(default_factory=list)
-    ready_to_build_blueprint: bool = Field(description="True if key data distributions and risks are resolved.")
+    ready_to_build_blueprint: bool = Field(
+        description="True if key data distributions and risks are resolved."
+    )
 
 
 # Per-column preprocessing specification
@@ -269,7 +293,9 @@ class ColumnSpec(BaseModel):
         "missing_indicator_plus_median",
     ] = "none"
     missing_constant_value: str | None = None
-    format_normalization: str = Field(default="", description="String or date standardization instruction.")
+    format_normalization: str = Field(
+        default="", description="String or date standardization instruction."
+    )
     outlier_strategy: Literal[
         "none",
         "keep_as_genuine_signal",
@@ -334,13 +360,23 @@ class FeatureIdea(BaseModel):
 class EdaBlueprint(BaseModel):
     """Output schema for EDA Analyst blueprint handoff."""
 
-    thinking: str = Field(description="Synthesis of dataset profile, cleaning needs, and risk areas.")
+    thinking: str = Field(
+        description="Synthesis of dataset profile, cleaning needs, and risk areas."
+    )
     cli_summary: str = Field(description="Crisp 1-3 line summary formatted for terminal display.")
-    concise_executive_summary: str = Field(description="Overview of dataset structure under 600 characters.")
-    duplicate_handling_policy: Literal["none", "drop_exact_duplicates", "deduplicate_by_id_keep_latest"] = "none"
-    target_distribution_and_imbalance: str = Field(description="Target distribution, class skew, or balance summary.")
+    concise_executive_summary: str = Field(
+        description="Overview of dataset structure under 600 characters."
+    )
+    duplicate_handling_policy: Literal[
+        "none", "drop_exact_duplicates", "deduplicate_by_id_keep_latest"
+    ] = "none"
+    target_distribution_and_imbalance: str = Field(
+        description="Target distribution, class skew, or balance summary."
+    )
     recommended_validation_scheme: ValidationScheme
-    recommended_split_column: str = Field(default="", description="Group or time column for splitting.")
+    recommended_split_column: str = Field(
+        default="", description="Group or time column for splitting."
+    )
     redundant_or_collinear_columns_to_drop: list[str] = Field(default_factory=list)
     leakage_risks_to_guard: list[str] = Field(default_factory=list)
     column_preprocessing_plan: list[ColumnSpec] = Field(default_factory=list)
@@ -357,7 +393,9 @@ class EdaState(BaseModel):
     open_questions: list[str] = Field(default_factory=list)
     findings: list[EdaFinding] = Field(default_factory=list)
     concise_executive_summary: str = ""
-    duplicate_handling_policy: Literal["none", "drop_exact_duplicates", "deduplicate_by_id_keep_latest"] = "none"
+    duplicate_handling_policy: Literal[
+        "none", "drop_exact_duplicates", "deduplicate_by_id_keep_latest"
+    ] = "none"
     target_distribution_and_imbalance: str = ""
     recommended_validation_scheme: ValidationScheme = "stratified_kfold"
     recommended_split_column: str = ""
@@ -372,18 +410,26 @@ class EdaState(BaseModel):
 class ValidationPlan(BaseModel):
     """Output schema for ML Lead validation locking and baseline configuration."""
 
-    thinking: str = Field(description="Rationale for split scheme, holdout partition, and baseline model.")
+    thinking: str = Field(
+        description="Rationale for split scheme, holdout partition, and baseline model."
+    )
     cli_summary: str = Field(description="Crisp 1-3 line summary formatted for terminal display.")
     validation_scheme: ValidationScheme
     n_splits: int = Field(default=5, ge=3, le=10)
     holdout_fraction: float = Field(default=0.15, ge=0.0, le=0.30)
     split_column: str = ""
     time_column: str = ""
-    gap: int = Field(default=0, ge=0, description="Temporal gap between train and validation folds.")
+    gap: int = Field(
+        default=0, ge=0, description="Temporal gap between train and validation folds."
+    )
     embargo: int = Field(default=0, ge=0, description="Embargo samples following validation fold.")
-    forecast_horizon: int = Field(default=0, ge=0, description="Number of future periods evaluated.")
+    forecast_horizon: int = Field(
+        default=0, ge=0, description="Number of future periods evaluated."
+    )
     planned_model_progression: list[str] = Field(description="Simple-to-complex algorithm roadmap.")
-    baseline_hypothesis_statement: str = Field(description="Baseline hypothesis to verify pipeline.")
+    baseline_hypothesis_statement: str = Field(
+        description="Baseline hypothesis to verify pipeline."
+    )
     baseline_model_family: str = Field(description="Simple Tier-1 starting algorithm.")
     target_post_processing: str = Field(default="none")
 
@@ -392,7 +438,9 @@ class ValidationPlan(BaseModel):
 class HypothesisPlan(BaseModel):
     """Output schema for ML Lead hypothesis strategist in round >= 1."""
 
-    thinking: str = Field(description="Evaluation of current Champion vs Challenger and next focus selection.")
+    thinking: str = Field(
+        description="Evaluation of current Champion vs Challenger and next focus selection."
+    )
     cli_summary: str = Field(description="Crisp 1-3 line summary formatted for terminal display.")
     previous_hypothesis_verdict: Literal[
         "validated_new_champion",
@@ -455,7 +503,9 @@ class FeatureOp(BaseModel):
     ]
     input_columns: list[str] = Field(default_factory=list)
     output_or_pruned_columns: list[str] = Field(default_factory=list)
-    implementation_rule: str = Field(description="Formula or rule fit strictly inside training fold.")
+    implementation_rule: str = Field(
+        description="Formula or rule fit strictly inside training fold."
+    )
     linked_idea_id: str = ""
 
 
@@ -463,7 +513,9 @@ class FeatureOp(BaseModel):
 class FeaturePlan(BaseModel):
     """Output schema for Feature Engineer."""
 
-    thinking: str = Field(description="Explanation of feature engineering and leak-free fold isolation.")
+    thinking: str = Field(
+        description="Explanation of feature engineering and leak-free fold isolation."
+    )
     cli_summary: str = Field(description="Crisp 1-3 line summary formatted for terminal display.")
     parent_feature_version: int = Field(description="Champion feature version being inherited.")
     operations_to_apply: list[FeatureOp] = Field(default_factory=list)
@@ -493,7 +545,9 @@ class FeatureVersionRecord(BaseModel):
 class ModelPlan(BaseModel):
     """Output schema for Modeler."""
 
-    thinking: str = Field(description="Selection of algorithm, hyperparameter defaults, and post-processing.")
+    thinking: str = Field(
+        description="Selection of algorithm, hyperparameter defaults, and post-processing."
+    )
     cli_summary: str = Field(description="Crisp 1-3 line summary formatted for terminal display.")
     model_family: str
     complexity_tier: ComplexityTier
@@ -620,7 +674,9 @@ class ErrorSlice(BaseModel):
 class EvaluationVerdict(BaseModel):
     """Output schema for Independent Evaluator audit."""
 
-    thinking: str = Field(description="Generalization audit across Train, CV, and Holdout partitions.")
+    thinking: str = Field(
+        description="Generalization audit across Train, CV, and Holdout partitions."
+    )
     cli_summary: str = Field(description="Crisp 1-3 line summary formatted for terminal display.")
     experiment_id: str
     verdict: Verdict
@@ -697,9 +753,15 @@ class DriftSpec(BaseModel):
 
     feature_or_target: str
     baseline_statistic: str
-    drift_metric: Literal["psi", "ks_test", "chi_square", "missing_rate_delta", "prediction_drift"] = "psi"
-    warning_threshold: float = Field(default=0.10, description="Numeric threshold triggering alert.")
-    retrain_threshold: float = Field(default=0.25, description="Numeric threshold triggering model retraining.")
+    drift_metric: Literal[
+        "psi", "ks_test", "chi_square", "missing_rate_delta", "prediction_drift"
+    ] = "psi"
+    warning_threshold: float = Field(
+        default=0.10, description="Numeric threshold triggering alert."
+    )
+    retrain_threshold: float = Field(
+        default=0.25, description="Numeric threshold triggering model retraining."
+    )
     action: str = "trigger_retraining"
 
 
@@ -707,9 +769,13 @@ class DriftSpec(BaseModel):
 class DeliveryPlan(BaseModel):
     """Output schema for Finalizer delivery agent."""
 
-    thinking: str = Field(description="Review of approved candidate models and final deliverable packaging.")
+    thinking: str = Field(
+        description="Review of approved candidate models and final deliverable packaging."
+    )
     cli_summary: str = Field(description="Crisp 1-3 line summary formatted for terminal display.")
-    delivery_strategy: Literal["single_champion_model", "weighted_oof_ensemble", "stacking_ensemble"]
+    delivery_strategy: Literal[
+        "single_champion_model", "weighted_oof_ensemble", "stacking_ensemble"
+    ]
     selected_experiment_ids: list[str] = Field(description="Eligible approved experiment IDs.")
     executive_summary: str = Field(description="Final technical project summary.")
     known_limitations_and_failure_modes: list[str] = Field(default_factory=list)
@@ -804,7 +870,9 @@ class Ledger(BaseModel):
         if not approved:
             return None
         if self.brief.higher_is_better:
-            return max(approved, key=lambda r: r.cv_mean if r.cv_mean is not None else float("-inf"))
+            return max(
+                approved, key=lambda r: r.cv_mean if r.cv_mean is not None else float("-inf")
+            )
         return min(approved, key=lambda r: r.cv_mean if r.cv_mean is not None else float("inf"))
 
     @property
@@ -865,7 +933,8 @@ class Ledger(BaseModel):
             if op.linked_idea_id
         }
         open_list = [
-            h for h in self.eda.feature_hypotheses
+            h
+            for h in self.eda.feature_hypotheses
             if h.status == "untested" and h.idea_id not in tested_ids
         ]
         order = {"high": 0, "medium": 1, "low": 2}
@@ -880,12 +949,22 @@ class Ledger(BaseModel):
             if round_runs:
                 # Pick best run for iteration
                 best_r = (
-                    max(round_runs, key=lambda r: r.cv_mean if r.cv_mean is not None else float("-inf"))
+                    max(
+                        round_runs,
+                        key=lambda r: r.cv_mean if r.cv_mean is not None else float("-inf"),
+                    )
                     if self.brief.higher_is_better
-                    else min(round_runs, key=lambda r: r.cv_mean if r.cv_mean is not None else float("inf"))
+                    else min(
+                        round_runs,
+                        key=lambda r: r.cv_mean if r.cv_mean is not None else float("inf"),
+                    )
                 )
                 score_str = f"CV={best_r.cv_mean:.4f}" if best_r.cv_mean is not None else "crashed"
-                hold_str = f", Holdout={best_r.holdout_score:.4f}" if best_r.holdout_score is not None else ""
+                hold_str = (
+                    f", Holdout={best_r.holdout_score:.4f}"
+                    if best_r.holdout_score is not None
+                    else ""
+                )
                 champ_tag = " [NEW CHAMPION]" if best_r.promoted_to_champion else ""
                 rows.append(
                     f"Round {it} ({hyp.route} | {best_r.model_family} on feat_v{best_r.feature_version}): "

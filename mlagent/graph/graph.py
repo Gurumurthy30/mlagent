@@ -77,7 +77,10 @@ def build_pipeline_graph(agent_context: AgentContext) -> CompiledStateGraph:
         curr_round = state.eda.eda_loops_used + 1
         max_eda = agent_context.config.limits.max_eda_loops
         agent_context.event_bus.emit(
-            EventType.STATUS, "Data Analyst", f"planning EDA round {curr_round} of {max_eda}", ledger=state
+            EventType.STATUS,
+            "Data Analyst",
+            f"planning EDA round {curr_round} of {max_eda}",
+            ledger=state,
         )
         plan = run_eda_think(state, agent_context)
         coder_data = execute_eda_script(plan, state, agent_context)
@@ -89,7 +92,10 @@ def build_pipeline_graph(agent_context: AgentContext) -> CompiledStateGraph:
             state.eda.done = True
         save_ledger(agent_context.workspace, state, node_name="eda_think")
         agent_context.event_bus.emit(
-            EventType.STATUS, "Data Analyst", f"EDA round {state.eda.eda_loops_used} complete", ledger=state
+            EventType.STATUS,
+            "Data Analyst",
+            f"EDA round {state.eda.eda_loops_used} complete",
+            ledger=state,
         )
         return state
 
@@ -123,12 +129,18 @@ def build_pipeline_graph(agent_context: AgentContext) -> CompiledStateGraph:
     def node_feature_engineer(state: Ledger) -> Ledger:
         state.phase = "feature_engineer"
         agent_context.event_bus.emit(
-            EventType.STATUS, "Feature Engineer", f"engineering features for round {state.iteration + 1}", ledger=state
+            EventType.STATUS,
+            "Feature Engineer",
+            f"engineering features for round {state.iteration + 1}",
+            ledger=state,
         )
         run_feature_engineer(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="feature_engineer")
         agent_context.event_bus.emit(
-            EventType.STATUS, "Feature Engineer", f"features for round {state.iteration + 1} ready", ledger=state
+            EventType.STATUS,
+            "Feature Engineer",
+            f"features for round {state.iteration + 1} ready",
+            ledger=state,
         )
         return state
 
@@ -136,12 +148,18 @@ def build_pipeline_graph(agent_context: AgentContext) -> CompiledStateGraph:
     def node_modeler(state: Ledger) -> Ledger:
         state.phase = "modeler"
         agent_context.event_bus.emit(
-            EventType.STATUS, "Modeler", f"training candidate model for round {state.iteration + 1}", ledger=state
+            EventType.STATUS,
+            "Modeler",
+            f"training candidate model for round {state.iteration + 1}",
+            ledger=state,
         )
         run_modeler(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="modeler")
         agent_context.event_bus.emit(
-            EventType.STATUS, "Modeler", f"model for round {state.iteration + 1} trained", ledger=state
+            EventType.STATUS,
+            "Modeler",
+            f"model for round {state.iteration + 1} trained",
+            ledger=state,
         )
         return state
 
@@ -149,12 +167,18 @@ def build_pipeline_graph(agent_context: AgentContext) -> CompiledStateGraph:
     def node_tuner(state: Ledger) -> Ledger:
         state.phase = "tuner"
         agent_context.event_bus.emit(
-            EventType.STATUS, "Tuner", f"tuning hyperparameters for round {state.iteration + 1}", ledger=state
+            EventType.STATUS,
+            "Tuner",
+            f"tuning hyperparameters for round {state.iteration + 1}",
+            ledger=state,
         )
         run_tuner(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="tuner")
         agent_context.event_bus.emit(
-            EventType.STATUS, "Tuner", f"hyperparameter tuning for round {state.iteration + 1} complete", ledger=state
+            EventType.STATUS,
+            "Tuner",
+            f"hyperparameter tuning for round {state.iteration + 1} complete",
+            ledger=state,
         )
         return state
 
@@ -162,12 +186,18 @@ def build_pipeline_graph(agent_context: AgentContext) -> CompiledStateGraph:
     def node_evaluator(state: Ledger) -> Ledger:
         state.phase = "evaluator"
         agent_context.event_bus.emit(
-            EventType.STATUS, "Evaluator", f"auditing validation for round {state.iteration + 1}", ledger=state
+            EventType.STATUS,
+            "Evaluator",
+            f"auditing validation for round {state.iteration + 1}",
+            ledger=state,
         )
         run_evaluator(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="evaluator")
         agent_context.event_bus.emit(
-            EventType.STATUS, "Evaluator", f"evaluation for round {state.iteration + 1} complete", ledger=state
+            EventType.STATUS,
+            "Evaluator",
+            f"evaluation for round {state.iteration + 1} complete",
+            ledger=state,
         )
         return state
 
@@ -175,12 +205,18 @@ def build_pipeline_graph(agent_context: AgentContext) -> CompiledStateGraph:
     def node_ml_lead(state: Ledger) -> Ledger:
         state.phase = "ml_lead"
         agent_context.event_bus.emit(
-            EventType.STATUS, "ML Lead", f"formulating strategy for round {state.iteration + 1}", ledger=state
+            EventType.STATUS,
+            "ML Lead",
+            f"formulating strategy for round {state.iteration + 1}",
+            ledger=state,
         )
         run_ml_lead_hypothesis(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="ml_lead")
         agent_context.event_bus.emit(
-            EventType.STATUS, "ML Lead", f"strategy for round {state.iteration + 1} formulated", ledger=state
+            EventType.STATUS,
+            "ML Lead",
+            f"strategy for round {state.iteration + 1} formulated",
+            ledger=state,
         )
         return state
 

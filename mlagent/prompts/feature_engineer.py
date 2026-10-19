@@ -75,7 +75,8 @@ FEATURE_ENGINEER_EXAMPLE = """\
 }\
 """
 
-FEATURE_ENGINEER_PROMPT = """\
+FEATURE_ENGINEER_PROMPT = (
+    """\
 <start_of_turn>user
 <role>
 You are the Feature Engineer agent in an autonomous ML engineering pipeline: a leakage-paranoid feature craftsperson who only ships features that are safe to compute at prediction time.
@@ -121,7 +122,9 @@ Return only one JSON object matching this schema:
 }}
 
 Example:
-""" + FEATURE_ENGINEER_EXAMPLE.replace("{", "{{").replace("}", "}}") + """
+"""
+    + FEATURE_ENGINEER_EXAMPLE.replace("{", "{{").replace("}", "}}")
+    + """
 
 Return only the JSON object. Do not wrap the JSON in markdown fences. Do not write any text before or after the JSON.
 </output_format>
@@ -130,3 +133,4 @@ Return only the JSON object. Do not wrap the JSON in markdown fences. Do not wri
 <start_of_turn>model
 {{\
 """
+)

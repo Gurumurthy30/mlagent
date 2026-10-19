@@ -1,6 +1,5 @@
 """Unit tests for typed memory cards."""
 
-
 from mlagent.memory.cards import (
     ChampionPointerCard,
     EdaFindingCard,

@@ -129,7 +129,14 @@ def test_project_brief_and_champion_pointer_present_in_agents(tmp_path: Path) ->
     assembler = MemoryAssembler(store)
     ledger = Ledger()
 
-    agents_with_both = ["eda_think", "ml_lead", "feature_engineer", "modeler", "evaluator", "finalizer"]
+    agents_with_both = [
+        "eda_think",
+        "ml_lead",
+        "feature_engineer",
+        "modeler",
+        "evaluator",
+        "finalizer",
+    ]
     for agent in agents_with_both:
         prompt = assembler.build_prompt(agent, ledger, task="Test task")
         assert "[project_brief]" in prompt, f"Missing project_brief in {agent}"

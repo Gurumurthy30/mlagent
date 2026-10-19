@@ -134,7 +134,9 @@ def render_environment_table(
     symbols = get_symbols(config.ascii_only)
 
     os_str = getattr(env, "operating_system", "Unknown")
-    has_internet = getattr(env, "can_reach_pypi", False) or getattr(env, "can_reach_huggingface", False)
+    has_internet = getattr(env, "can_reach_pypi", False) or getattr(
+        env, "can_reach_huggingface", False
+    )
     net_parts = []
     if getattr(env, "can_reach_pypi", False):
         net_parts.append("PyPI")
@@ -240,7 +242,9 @@ def render_confirmation_panel(
     grid.add_column("Value", style=theme.text)
 
     grid.add_row("Task:", f"[{theme.accent}]{escape(task)}[/]")
-    grid.add_row("Metrics:", escape(metrics) if metrics else f"[{theme.muted}]Agents will decide[/]")
+    grid.add_row(
+        "Metrics:", escape(metrics) if metrics else f"[{theme.muted}]Agents will decide[/]"
+    )
     grid.add_row("Data folder:", str(data_folder))
     grid.add_row("Loop limits:", f"{max_exp} experiment rounds (EDA cap: {max_eda})")
     grid.add_row("Workspace:", str(workspace_folder))
@@ -304,14 +308,18 @@ class LiveStatusBar:
             clean_reason if len(clean_reason) <= 45 else clean_reason[:42].rstrip() + "..."
         )
         import time
+
         self.action_start_time = time.monotonic()
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         import time
+
         if self.ledger is not None:
             action_elapsed = time.monotonic() - self.action_start_time
             total_elapsed = time.monotonic() - self.start_time
-            act_text = self.current_action + (f", because {self.current_reason}" if self.current_reason else "")
+            act_text = self.current_action + (
+                f", because {self.current_reason}" if self.current_reason else ""
+            )
             lines = build_live_status_renderable(
                 self.ledger,
                 self.config,
@@ -550,8 +558,12 @@ def render_summary_panel(ledger: Ledger, config: UiConfig) -> Panel | str:
             f"Status: {ledger.status.upper()} (Phase: {ledger.phase})",
         ]
         if champ and champ.cv_mean is not None:
-            ho_text = f", Holdout: {champ.holdout_score:.4f}" if champ.holdout_score is not None else ""
-            lines.append(f"Best Model: {champ.experiment_id} ({champ.model_family}, FV {champ.feature_version}) CV={champ.cv_mean:.4f}{ho_text}")
+            ho_text = (
+                f", Holdout: {champ.holdout_score:.4f}" if champ.holdout_score is not None else ""
+            )
+            lines.append(
+                f"Best Model: {champ.experiment_id} ({champ.model_family}, FV {champ.feature_version}) CV={champ.cv_mean:.4f}{ho_text}"
+            )
         if ledger.eda.concise_executive_summary:
             lines.append(f"EDA Summary: {ledger.eda.concise_executive_summary}")
         if ledger.final.predictions_path:
@@ -572,7 +584,9 @@ def render_summary_panel(ledger: Ledger, config: UiConfig) -> Panel | str:
     # Best result / Champion
     if champ and champ.cv_mean is not None:
         cv_std_str = f" (±{champ.cv_std:.4f})" if champ.cv_std is not None else ""
-        holdout_str = f", holdout: {champ.holdout_score:.4f}" if champ.holdout_score is not None else ""
+        holdout_str = (
+            f", holdout: {champ.holdout_score:.4f}" if champ.holdout_score is not None else ""
+        )
         res_text = (
             f"[{theme.accent}]{champ.experiment_id}[/] ([bold]{champ.model_family}[/], FV {champ.feature_version}) achieving "
             f"[{theme.ok}]{champ.cv_mean:.4f}{cv_std_str}[/] {primary_metric}{holdout_str}"
@@ -587,7 +601,8 @@ def render_summary_panel(ledger: Ledger, config: UiConfig) -> Panel | str:
     top_findings = ledger.eda.findings[:3]
     if top_findings:
         findings_text = "\n".join(
-            f"{symbols['bullet']} [{escape(f.priority)}] {escape(f.statement)}" for f in top_findings
+            f"{symbols['bullet']} [{escape(f.priority)}] {escape(f.statement)}"
+            for f in top_findings
         )
         grid.add_row("Top Findings:", findings_text)
 
@@ -599,7 +614,10 @@ def render_summary_panel(ledger: Ledger, config: UiConfig) -> Panel | str:
 
     # Trust & validation check stats
     total_runs = len(ledger.runs)
-    grid.add_row("Validation Audit:", f"{len(approved_runs)} of {total_runs} model runs approved under generalization audit")
+    grid.add_row(
+        "Validation Audit:",
+        f"{len(approved_runs)} of {total_runs} model runs approved under generalization audit",
+    )
 
     # Files & Deliverables
     file_lines = []

@@ -15,7 +15,11 @@ SAMPLE_SUBMISSION_ROLE = "sample_submission"
 # Search project files for sample submission template
 def find_sample_submission(brief: Any, project_folder: Path) -> Path | None:
     # Retrieve files from dataset profile or direct files attribute
-    files = brief.profile.files if hasattr(brief, "profile") and brief.profile else getattr(brief, "files", [])
+    files = (
+        brief.profile.files
+        if hasattr(brief, "profile") and brief.profile
+        else getattr(brief, "files", [])
+    )
     for file_info in files:
         role = getattr(file_info, "inferred_role", getattr(file_info, "role", ""))
         file_path_str = getattr(file_info, "path", "")
@@ -78,9 +82,7 @@ def check_csv_file(predictions_path: Path, brief: Any, project_folder: Path) -> 
     return problems
 
 
-def check_predictions_file(
-    predictions_path: Path, brief: Any, project_folder: Path
-) -> list[str]:
+def check_predictions_file(predictions_path: Path, brief: Any, project_folder: Path) -> list[str]:
     """Return the problems found. An empty list means the file passed every check."""
     if not predictions_path.exists():
         return [f"The predictions file {predictions_path} does not exist."]

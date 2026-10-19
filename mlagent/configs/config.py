@@ -22,19 +22,39 @@ class ConfigError(Exception):
 class LlmConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    provider: Literal["ollama", "nvidia"] = Field(
+        default="ollama",
+        description="LLM provider: 'ollama' or 'nvidia'",
+    )
     name: str = Field(
         default="gemma4:31b",
-        description="Ollama model name (e.g. gemma4:31b, nemotron-3-super)",
+        description="Model name (e.g. gemma4:31b for Ollama, nvidia/nemotron-3.5-super-vl-120b-a12b for NVIDIA NIM)",
     )
     base_url: str = Field(
         default="https://ollama.com",
-        description="Ollama server host address",
+        description="Server host address (e.g. https://ollama.com or https://integrate.api.nvidia.com/v1)",
+    )
+    api_key: str = Field(
+        default="",
+        description="API key for provider (optional; defaults to NVIDIA_API_KEY or OLLAMA_API_KEY env var)",
     )
     temperature: float = Field(
-        default=0.2,
+        default=1.0,
         ge=0.0,
         le=2.0,
         description="Sampling temperature for the LLM",
+    )
+    top_p: float = Field(
+        default=0.95,
+        ge=0.0,
+        le=1.0,
+        description="Top-p (nucleus) sampling probability",
+    )
+    top_k: int | None = Field(
+        default=64,
+        ge=1,
+        le=1000,
+        description="Top-k sampling cutoff (Ollama only)",
     )
     context: int = Field(
         default=16384,
@@ -42,11 +62,28 @@ class LlmConfig(BaseModel):
         le=131072,
         description="Ollama context window in tokens (num_ctx)",
     )
+    seed: int = Field(
+        default=42,
+        description="Random seed for deterministic generation",
+    )
+    enable_thinking: bool = Field(
+        default=True,
+        description="Enable reasoning / thinking mode if supported",
+    )
 
     @model_validator(mode="before")
     @classmethod
     def handle_context_alias(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            provider = data.get("provider", "ollama")
+            if provider == "nvidia":
+                if "base_url" not in data or data.get("base_url") in (
+                    "https://ollama.com",
+                    "http://localhost:11434",
+                ):
+                    data["base_url"] = "https://integrate.api.nvidia.com/v1"
+                if "name" not in data or data.get("name") == "gemma4:31b":
+                    data["name"] = "nvidia/nemotron-3.5-super-vl-120b-a12b"
             if "context_length" in data and "context" not in data:
                 data["context"] = data.pop("context_length")
             elif "context_length" in data:
@@ -56,6 +93,7 @@ class LlmConfig(BaseModel):
     @property
     def context_length(self) -> int:
         return self.context
+
     request_timeout_seconds: int = Field(
         default=900,
         ge=10,
@@ -310,8 +348,12 @@ class AppConfig(BaseModel):
 
 
 BASIC_KEYS = {
+    ("llm", "provider"),
     ("llm", "name"),
     ("llm", "base_url"),
+    ("llm", "temperature"),
+    ("llm", "top_p"),
+    ("llm", "top_k"),
     ("llm", "context"),
     ("compute", "use_gpu"),
     ("limits", "max_experiment_loops"),
@@ -425,12 +467,25 @@ def load_config(
     # Fallback to environment variables if not specified in config or overrides
     if "llm" not in raw_dict or not isinstance(raw_dict["llm"], dict):
         raw_dict["llm"] = {}
-    if "name" not in raw_dict["llm"] and os.environ.get("OLLAMA_MODEL"):
-        raw_dict["llm"]["name"] = os.environ["OLLAMA_MODEL"].strip()
-    if "base_url" not in raw_dict["llm"]:
-        env_base = os.environ.get("OLLAMA_BASE_URL") or os.environ.get("OLLAMA_HOST")
-        if env_base:
-            raw_dict["llm"]["base_url"] = env_base.strip()
+    provider = raw_dict["llm"].get("provider") or os.environ.get("MLAGENT_LLM_PROVIDER") or "ollama"
+    raw_dict["llm"]["provider"] = provider
+
+    if provider == "nvidia":
+        if "api_key" not in raw_dict["llm"] and os.environ.get("NVIDIA_API_KEY"):
+            raw_dict["llm"]["api_key"] = os.environ["NVIDIA_API_KEY"].strip()
+        if "name" not in raw_dict["llm"] and os.environ.get("NVIDIA_MODEL"):
+            raw_dict["llm"]["name"] = os.environ["NVIDIA_MODEL"].strip()
+        if "base_url" not in raw_dict["llm"] and os.environ.get("NVIDIA_BASE_URL"):
+            raw_dict["llm"]["base_url"] = os.environ["NVIDIA_BASE_URL"].strip()
+    else:
+        if "name" not in raw_dict["llm"] and os.environ.get("OLLAMA_MODEL"):
+            raw_dict["llm"]["name"] = os.environ["OLLAMA_MODEL"].strip()
+        if "base_url" not in raw_dict["llm"]:
+            env_base = os.environ.get("OLLAMA_BASE_URL") or os.environ.get("OLLAMA_HOST")
+            if env_base:
+                raw_dict["llm"]["base_url"] = env_base.strip()
+        if "api_key" not in raw_dict["llm"] and os.environ.get("OLLAMA_API_KEY"):
+            raw_dict["llm"]["api_key"] = os.environ["OLLAMA_API_KEY"].strip()
     raw_dict.pop("context", None)
 
     try:
@@ -495,11 +550,7 @@ def get_effective_config_details(
                 and field_name in raw_file_dict[section_name]
             ):
                 source = "file"
-            elif (
-                section_name == "llm"
-                and field_name == "name"
-                and os.environ.get("OLLAMA_MODEL")
-            ):
+            elif section_name == "llm" and field_name == "name" and os.environ.get("OLLAMA_MODEL"):
                 source = "env"
             elif (
                 section_name == "llm"
@@ -520,4 +571,3 @@ def get_effective_config_details(
                 }
             )
     return details
-

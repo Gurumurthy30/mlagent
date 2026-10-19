@@ -115,11 +115,13 @@ def load_dotenv_if_present(folder: Path | None = None) -> None:
     candidates = [Path.cwd() / ".env"]
     if folder is not None:
         folder_path = Path(folder).resolve()
-        candidates.extend([
-            folder_path / ".env",
-            folder_path.parent / ".env",
-            folder_path.parent.parent / ".env",
-        ])
+        candidates.extend(
+            [
+                folder_path / ".env",
+                folder_path.parent / ".env",
+                folder_path.parent.parent / ".env",
+            ]
+        )
 
     seen_paths: set[Path] = set()
     for dotenv_path in candidates:
@@ -287,9 +289,7 @@ def config_command(
             val_str = val_str[:29] + "..."
         src = item["source"]
         src_style = (
-            ui.theme.ok
-            if src == "file"
-            else (ui.theme.accent if src == "cli" else ui.theme.muted)
+            ui.theme.ok if src == "file" else (ui.theme.accent if src == "cli" else ui.theme.muted)
         )
         table.add_row(item["section"], item["key"], val_str, f"[{src_style}]{src}[/]")
 
@@ -550,9 +550,7 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="Override a config setting, e.g. --set limits.max_eda_loops=6",
     )
-    common_parser.add_argument(
-        "-y", "--yes", action="store_true", help="Skip confirmation prompt"
-    )
+    common_parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
     common_parser.add_argument(
         "--debug", action="store_true", help="Show full stack traces on unexpected errors"
     )

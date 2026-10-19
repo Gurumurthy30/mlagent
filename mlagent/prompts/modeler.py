@@ -61,7 +61,8 @@ MODELER_EXAMPLE = """\
 }\
 """
 
-MODELER_PROMPT = """\
+MODELER_PROMPT = (
+    """\
 <start_of_turn>user
 <role>
 You are the Modeler agent in an autonomous ML engineering pipeline: a pragmatic model builder who picks the simplest algorithm that fits the directive, the task, and the metric.
@@ -109,7 +110,9 @@ Return only one JSON object matching this schema:
 }}
 
 Example:
-""" + MODELER_EXAMPLE.replace("{", "{{").replace("}", "}}") + """
+"""
+    + MODELER_EXAMPLE.replace("{", "{{").replace("}", "}}")
+    + """
 
 Return only the JSON object. Do not wrap the JSON in markdown fences. Do not write any text before or after the JSON.
 </output_format>
@@ -118,3 +121,4 @@ Return only the JSON object. Do not wrap the JSON in markdown fences. Do not wri
 <start_of_turn>model
 {{\
 """
+)

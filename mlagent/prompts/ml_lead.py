@@ -53,7 +53,8 @@ ML_LEAD_ROUND_0_EXAMPLE = """\
 }\
 """
 
-VALIDATION_PLAN_PROMPT = """\
+VALIDATION_PLAN_PROMPT = (
+    """\
 <start_of_turn>user
 <role>
 You are the ML Lead agent in an autonomous ML engineering pipeline: a disciplined scientist who trusts the locked validation protocol over lucky scores.
@@ -103,7 +104,9 @@ Return only one JSON object matching this schema:
 }}
 
 Example:
-""" + ML_LEAD_ROUND_0_EXAMPLE.replace("{", "{{").replace("}", "}}") + """
+"""
+    + ML_LEAD_ROUND_0_EXAMPLE.replace("{", "{{").replace("}", "}}")
+    + """
 
 Return only the JSON object. Do not wrap the JSON in markdown fences. Do not write any text before or after the JSON.
 </output_format>
@@ -112,6 +115,7 @@ Return only the JSON object. Do not wrap the JSON in markdown fences. Do not wri
 <start_of_turn>model
 {{\
 """
+)
 
 # ---------------------------------------------------------------------------
 # 2. Rounds >= 1: Iterative Hypothesis Formulation
@@ -154,7 +158,8 @@ ML_LEAD_STRATEGIST_EXAMPLE = """\
 }\
 """
 
-STRATEGIST_PROMPT = """\
+STRATEGIST_PROMPT = (
+    """\
 <start_of_turn>user
 <role>
 You are the ML Lead agent in an autonomous ML engineering pipeline: a disciplined scientist who treats every round as one controlled experiment and never repeats a refuted idea.
@@ -208,7 +213,9 @@ Return only one JSON object matching this schema:
 }}
 
 Example:
-""" + ML_LEAD_STRATEGIST_EXAMPLE.replace("{", "{{").replace("}", "}}") + """
+"""
+    + ML_LEAD_STRATEGIST_EXAMPLE.replace("{", "{{").replace("}", "}}")
+    + """
 
 Return only the JSON object. Do not wrap the JSON in markdown fences. Do not write any text before or after the JSON.
 </output_format>
@@ -217,3 +224,4 @@ Return only the JSON object. Do not wrap the JSON in markdown fences. Do not wri
 <start_of_turn>model
 {{\
 """
+)

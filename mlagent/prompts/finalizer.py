@@ -69,7 +69,8 @@ FINALIZER_EXAMPLE = """\
 }\
 """
 
-FINALIZER_PROMPT = """\
+FINALIZER_PROMPT = (
+    """\
 <start_of_turn>user
 <role>
 You are the Finalizer and Delivery agent in an autonomous ML engineering pipeline: a release engineer who packages verified models and ensures production safety.
@@ -111,7 +112,9 @@ Return only one JSON object matching this schema:
 }}
 
 Example:
-""" + FINALIZER_EXAMPLE.replace("{", "{{").replace("}", "}}") + """
+"""
+    + FINALIZER_EXAMPLE.replace("{", "{{").replace("}", "}}")
+    + """
 
 Return only the JSON object. Do not wrap the JSON in markdown fences. Do not write any text before or after the JSON.
 </output_format>
@@ -120,3 +123,4 @@ Return only the JSON object. Do not wrap the JSON in markdown fences. Do not wri
 <start_of_turn>model
 {{\
 """
+)

@@ -68,7 +68,9 @@ def run_eda_think(ledger: Ledger, agent_context: AgentContext) -> EdaQuestionPla
 
     store = MemoryStore(agent_context.workspace.root)
     assembler = MemoryAssembler(store)
-    task_text = f"Plan 1 to 5 quantitative exploratory questions for EDA round {eda_round} of {max_rounds}."
+    task_text = (
+        f"Plan 1 to 5 quantitative exploratory questions for EDA round {eda_round} of {max_rounds}."
+    )
     prompt = assembler.build_prompt(
         agent_name="eda_think",
         ledger=ledger,
@@ -224,7 +226,9 @@ def run_eda_blueprint(ledger: Ledger, agent_context: AgentContext) -> EdaBluepri
 
     store = MemoryStore(agent_context.workspace.root)
     assembler = MemoryAssembler(store)
-    task_text = "Synthesize all empirical findings and data distributions into the master EDA blueprint."
+    task_text = (
+        "Synthesize all empirical findings and data distributions into the master EDA blueprint."
+    )
     prompt = assembler.build_prompt(
         agent_name="eda_blueprint",
         ledger=ledger,
@@ -249,7 +253,9 @@ def run_eda_blueprint(ledger: Ledger, agent_context: AgentContext) -> EdaBluepri
     ledger.eda.target_distribution_and_imbalance = blueprint.target_distribution_and_imbalance
     ledger.eda.recommended_validation_scheme = blueprint.recommended_validation_scheme
     ledger.eda.recommended_split_column = blueprint.recommended_split_column
-    ledger.eda.redundant_or_collinear_columns_to_drop = blueprint.redundant_or_collinear_columns_to_drop
+    ledger.eda.redundant_or_collinear_columns_to_drop = (
+        blueprint.redundant_or_collinear_columns_to_drop
+    )
     ledger.eda.leakage_risks_to_guard = blueprint.leakage_risks_to_guard
     ledger.eda.column_preprocessing_plan = blueprint.column_preprocessing_plan
     ledger.eda.domain_consistency_rules = blueprint.domain_consistency_rules

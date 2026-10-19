@@ -11,6 +11,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -108,10 +109,13 @@ def _align_and_save_predictions(
                 aligned_df[id_col] = df[id_col]
             else:
                 first_col = df.columns[0]
-                if first_col.lower() in ["id", "imageid", "row_id", "sample_id", "index"] or len(df.columns) > 1:
+                if (
+                    first_col.lower() in ["id", "imageid", "row_id", "sample_id", "index"]
+                    or len(df.columns) > 1
+                ):
                     aligned_df[id_col] = df[first_col]
                 else:
-                    aligned_df[id_col] = sample_df[id_col].values[:len(df)]
+                    aligned_df[id_col] = sample_df[id_col].values[: len(df)]
 
             for idx, target_col in enumerate(sample_df.columns[1:], start=1):
                 if target_col in df.columns:
@@ -123,7 +127,7 @@ def _align_and_save_predictions(
                 elif len(df.columns) == 1:
                     aligned_df[target_col] = df.iloc[:, 0]
                 else:
-                    aligned_df[target_col] = sample_df[target_col].values[:len(df)]
+                    aligned_df[target_col] = sample_df[target_col].values[: len(df)]
 
             if len(aligned_df) == len(sample_df):
                 aligned_df[sample_df.columns[0]] = sample_df.iloc[:, 0].values
@@ -147,7 +151,10 @@ def _align_and_save_predictions(
                 rename_dict["prediction"] = target_col
 
             first_col = df.columns[0]
-            if first_col != id_col and (first_col.lower() in ["id", "imageid", "row_id", "index", "unnamed: 0"] or first_col == "0"):
+            if first_col != id_col and (
+                first_col.lower() in ["id", "imageid", "row_id", "index", "unnamed: 0"]
+                or first_col == "0"
+            ):
                 rename_dict[first_col] = id_col
 
             if rename_dict:
@@ -227,7 +234,10 @@ def run_finalizer(ledger: Ledger, agent_context: AgentContext) -> DeliveryPlan:
 
     # Ensembling or champion copy
     is_blended = False
-    if plan.delivery_strategy in ["weighted_oof_ensemble", "stacking_ensemble"] and len(plan.selected_experiment_ids) > 1:
+    if (
+        plan.delivery_strategy in ["weighted_oof_ensemble", "stacking_ensemble"]
+        and len(plan.selected_experiment_ids) > 1
+    ):
         is_blended = _blend_test_predictions(plan.selected_experiment_ids, ledger, predictions_file)
 
     if not is_blended:
@@ -283,7 +293,9 @@ def run_finalizer(ledger: Ledger, agent_context: AgentContext) -> DeliveryPlan:
         report_content.append(f"- {lim}\n")
 
     report_content.append("\n## Production Drift Monitoring Plan\n")
-    report_content.append("| Feature / Target | Baseline Metric | Drift Test | Warning Threshold | Retrain Threshold | Action |\n")
+    report_content.append(
+        "| Feature / Target | Baseline Metric | Drift Test | Warning Threshold | Retrain Threshold | Action |\n"
+    )
     report_content.append("|---|---|---|---|---|---|\n")
     for drift in plan.monitoring_and_maintenance_plan:
         report_content.append(

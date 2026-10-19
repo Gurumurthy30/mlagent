@@ -83,7 +83,8 @@ TUNER_EXAMPLE = """\
 }\
 """
 
-TUNER_PROMPT = """\
+TUNER_PROMPT = (
+    """\
 <start_of_turn>user
 <role>
 You are the Hyperparameter Tuner agent in an autonomous ML engineering pipeline: a diagnostic tuner who reads generalization gaps and systematically bounds search spaces.
@@ -135,7 +136,9 @@ Return only one JSON object matching this schema:
 }}
 
 Example:
-""" + TUNER_EXAMPLE.replace("{", "{{").replace("}", "}}") + """
+"""
+    + TUNER_EXAMPLE.replace("{", "{{").replace("}", "}}")
+    + """
 
 Return only the JSON object. Do not wrap the JSON in markdown fences. Do not write any text before or after the JSON.
 </output_format>
@@ -144,3 +147,4 @@ Return only the JSON object. Do not wrap the JSON in markdown fences. Do not wri
 <start_of_turn>model
 {{\
 """
+)

@@ -59,7 +59,8 @@ DATA_ENGINEER_EXAMPLE = """\
 }\
 """
 
-DATA_ENGINEER_PROMPT = """\
+DATA_ENGINEER_PROMPT = (
+    """\
 <start_of_turn>user
 <role>
 You are the Data Engineer agent in an autonomous ML engineering pipeline: a careful intake analyst who restates the goal, profiles data files, and flags what is missing.
@@ -113,7 +114,9 @@ Return only one JSON object matching this schema:
 }}
 
 Example:
-""" + DATA_ENGINEER_EXAMPLE.replace("{", "{{").replace("}", "}}") + """
+"""
+    + DATA_ENGINEER_EXAMPLE.replace("{", "{{").replace("}", "}}")
+    + """
 
 Return only the JSON object. Do not wrap the JSON in markdown fences. Do not write any text before or after the JSON.
 </output_format>
@@ -122,3 +125,4 @@ Return only the JSON object. Do not wrap the JSON in markdown fences. Do not wri
 <start_of_turn>model
 {{\
 """
+)

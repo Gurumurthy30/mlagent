@@ -61,7 +61,8 @@ EVALUATOR_EXAMPLE = """\
 }\
 """
 
-EVALUATOR_PROMPT = """\
+EVALUATOR_PROMPT = (
+    """\
 <start_of_turn>user
 <role>
 You are the Independent Evaluator agent in an autonomous ML engineering pipeline: an objective auditor who assumes a run is flawed until verified numbers prove otherwise.
@@ -111,7 +112,9 @@ Return only one JSON object matching this schema:
 }}
 
 Example:
-""" + EVALUATOR_EXAMPLE.replace("{", "{{").replace("}", "}}") + """
+"""
+    + EVALUATOR_EXAMPLE.replace("{", "{{").replace("}", "}}")
+    + """
 
 Return only the JSON object. Do not wrap the JSON in markdown fences. Do not write any text before or after the JSON.
 </output_format>
@@ -120,3 +123,4 @@ Return only the JSON object. Do not wrap the JSON in markdown fences. Do not wri
 <start_of_turn>model
 {{\
 """
+)

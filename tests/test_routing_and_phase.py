@@ -23,7 +23,7 @@ def test_route_after_evaluator_stops_strictly_at_max_loops() -> None:
     for it in range(12):
         ledger.iteration = it
         run = ExperimentRun(
-            experiment_id=f"experiment_{it+1:03d}",
+            experiment_id=f"experiment_{it + 1:03d}",
             iteration=it,
             model_family="ridge",
             cv_mean=35000.0 - it * 100,
@@ -46,7 +46,7 @@ def test_route_after_evaluator_allows_running_up_to_max() -> None:
     for it in range(11):
         ledger.iteration = it
         run = ExperimentRun(
-            experiment_id=f"experiment_{it+1:03d}",
+            experiment_id=f"experiment_{it + 1:03d}",
             iteration=it,
             model_family="ridge",
             cv_mean=35000.0,

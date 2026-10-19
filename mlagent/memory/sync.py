@@ -293,7 +293,9 @@ def sync_ledger_node_memory(
             _safe_append(store, h_card)
 
             if hyp.lesson_learned:
-                l_summary = f"Lesson {hyp.hypothesis_id}: {hyp.lesson_learned} (Route: {hyp.route})."
+                l_summary = (
+                    f"Lesson {hyp.hypothesis_id}: {hyp.lesson_learned} (Route: {hyp.route})."
+                )
                 l_card = LessonLearnedCard(
                     tag="lesson_learned",
                     card_id=f"lesson_{hyp.hypothesis_id}",

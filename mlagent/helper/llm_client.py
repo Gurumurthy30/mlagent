@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 import httpx
 import ollama
 from langchain_ollama import ChatOllama
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from mlagent.configs.config import LlmConfig as ModelConfig
 from mlagent.configs.settings import (
@@ -53,6 +53,9 @@ def is_cloud_direct(base_url: str) -> bool:
 
 def extract_json_text(response_text: str) -> str:
     """Extract JSON from a code fence or surrounding text."""
+    if not response_text:
+        return ""
+
     # 1. Check for fenced code block containing an object
     fenced_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response_text, re.DOTALL)
     if fenced_match:
@@ -62,12 +65,27 @@ def extract_json_text(response_text: str) -> str:
     fenced_generic = re.search(r"```(?:json)?\s*(.*?)```", response_text, re.DOTALL)
     candidate_text = fenced_generic.group(1) if fenced_generic else response_text
 
-    # 3. Extract outermost curly braces
-    start_brace = candidate_text.find("{")
-    end_brace = candidate_text.rfind("}")
+    trimmed = candidate_text.strip()
+    # 3. If model output started without opening brace '{' (e.g. from model turn prefill '{')
+    if not trimmed.startswith("{") and "}" in trimmed:
+        first_brace = trimmed.find("{")
+        last_brace = trimmed.rfind("}")
+        if first_brace != -1 and first_brace < last_brace:
+            return trimmed[first_brace : last_brace + 1].strip()
+        trimmed = "{\n" + trimmed
+
+    # 4. Extract outermost curly braces
+    start_brace = trimmed.find("{")
+    end_brace = trimmed.rfind("}")
     if start_brace != -1 and end_brace != -1 and start_brace < end_brace:
-        return candidate_text[start_brace : end_brace + 1].strip()
-    return candidate_text.strip()
+        return trimmed[start_brace : end_brace + 1].strip()
+
+    # 5. Missing closing brace from token limit
+    if trimmed.startswith("{") and not trimmed.endswith("}"):
+        trimmed = trimmed + "\n}"
+        return trimmed.strip()
+
+    return trimmed
 
 
 def format_compact_schema(model_cls: type[BaseModel]) -> str:
@@ -139,17 +157,63 @@ class LlmClient:
         self.model_config = model_config
         self.workspace = workspace
         self.event_bus = event_bus
+        provider = getattr(model_config, "provider", "ollama")
         timeout = getattr(model_config, "request_timeout_seconds", LLM_CALL_TIMEOUT_SECONDS)
-        self.chat_model = ChatOllama(
-            model=model_config.name,
-            base_url=model_config.base_url,
-            temperature=model_config.temperature,
-            num_ctx=model_config.context,
-            client_kwargs={"timeout": timeout},
-        )
+        top_p = getattr(model_config, "top_p", 0.95)
+        top_k = getattr(model_config, "top_k", None)
+        if provider == "nvidia":
+            from langchain_nvidia_ai_endpoints import ChatNVIDIA
+
+            api_key = model_config.api_key or os.getenv("NVIDIA_API_KEY", "")
+            base_url = model_config.base_url or "https://integrate.api.nvidia.com/v1"
+            chat_instance = ChatNVIDIA(
+                base_url=base_url,
+                model=model_config.name,
+                api_key=api_key,
+                temperature=model_config.temperature,
+                top_p=top_p,
+                max_completion_tokens=model_config.context,
+                seed=getattr(model_config, "seed", 42),
+            )
+            bind_kwargs: dict[str, Any] = {"parallel_tool_calls": True}
+            if getattr(model_config, "enable_thinking", True):
+                bind_kwargs["chat_template_kwargs"] = {"enable_thinking": True}
+            self.chat_model = chat_instance.bind(**bind_kwargs)
+        else:
+            chat_kwargs: dict[str, Any] = {
+                "model": model_config.name,
+                "base_url": model_config.base_url,
+                "temperature": model_config.temperature,
+                "top_p": top_p,
+                "num_ctx": model_config.context,
+                "client_kwargs": {"timeout": timeout},
+            }
+            if top_k is not None:
+                chat_kwargs["top_k"] = top_k
+            self.chat_model = ChatOllama(**chat_kwargs)
 
     def check_ready(self) -> None:
-        """Make sure Ollama is running and the configured model is available."""
+        """Make sure the configured LLM provider and model are available."""
+        provider = getattr(self.model_config, "provider", "ollama")
+        if provider == "nvidia":
+            api_key = self.model_config.api_key or os.getenv("NVIDIA_API_KEY", "")
+            if not api_key:
+                raise LlmUnavailableError(
+                    "NVIDIA NIM provider requires NVIDIA_API_KEY. "
+                    "Set NVIDIA_API_KEY in your environment or set llm.api_key in config.yaml."
+                )
+            try:
+                from langchain_nvidia_ai_endpoints import ChatNVIDIA
+
+                _ = ChatNVIDIA(
+                    base_url=self.model_config.base_url or "https://integrate.api.nvidia.com/v1",
+                    model=self.model_config.name,
+                    api_key=api_key,
+                )
+            except Exception as error:
+                raise LlmUnavailableError(f"Cannot initialize NVIDIA NIM: {error}") from error
+            return
+
         model_name = self.model_config.name
         base_url = self.model_config.base_url
         if is_cloud_direct(base_url) and not os.getenv("OLLAMA_API_KEY"):
@@ -168,7 +232,9 @@ class LlmClient:
                 f"Cannot reach Ollama at {base_url}. Start Ollama and run again. ({error})"
             ) from error
 
-        installed_names = [_extract_model_name(m) for m in installed_models if _extract_model_name(m)]
+        installed_names = [
+            _extract_model_name(m) for m in installed_models if _extract_model_name(m)
+        ]
         is_matched = any(_matches_model(name, model_name) for name in installed_names)
         if not is_matched:
             if is_cloud_direct(base_url):
@@ -189,6 +255,8 @@ class LlmClient:
         prompt: str,
         system_message: str | None = None,
         temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
     ) -> str:
         return self._ask(
             agent_name,
@@ -196,6 +264,8 @@ class LlmClient:
             json_schema=None,
             system_message=system_message,
             temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
         )
 
     def ask_structured(
@@ -208,6 +278,8 @@ class LlmClient:
         output_schema: type[AnswerModel] | None = None,
         system_prompt: str | None = None,
         temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
     ) -> AnswerModel:
         model_target = answer_model or output_schema
         if model_target is None:
@@ -236,10 +308,19 @@ class LlmClient:
                 json_schema,
                 system_message=effective_system,
                 temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
             )
             try:
-                return model_target.model_validate_json(extract_json_text(response_text))
-            except ValidationError as validation_error:
+                raw_json = extract_json_text(response_text)
+                try:
+                    return model_target.model_validate_json(raw_json)
+                except Exception:
+                    import json
+
+                    parsed_dict = json.loads(raw_json, strict=False)
+                    return model_target.model_validate(parsed_dict)
+            except Exception as validation_error:
                 problem = str(validation_error)
                 current_prompt = (
                     f"{base_prompt}\n\n"
@@ -264,20 +345,83 @@ class LlmClient:
         json_schema: dict | None,
         system_message: str | None = None,
         temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
     ) -> str:
-        """The only method that talks to Ollama. Tests replace it with scripted answers."""
-        send_schema = json_schema is not None and not is_cloud_direct(self.model_config.base_url)
+        """The only method that talks to the LLM provider. Tests replace it with scripted answers."""
+        is_nvidia = getattr(self.model_config, "provider", "ollama") == "nvidia"
+        send_schema = (
+            json_schema is not None
+            and not is_nvidia
+            and not is_cloud_direct(self.model_config.base_url)
+        )
         keyword_arguments = {"format": json_schema} if send_schema else {}
-        chat = self.chat_model.bind(temperature=temperature) if temperature is not None else self.chat_model
+        bind_kwargs: dict[str, Any] = {}
+        if temperature is not None:
+            bind_kwargs["temperature"] = temperature
+        if top_p is not None:
+            bind_kwargs["top_p"] = top_p
+        if top_k is not None and not is_nvidia:
+            bind_kwargs["top_k"] = top_k
+        chat = self.chat_model.bind(**bind_kwargs) if bind_kwargs else self.chat_model
 
-        # Gemma 32B has no system role. Prepend role instructions directly into user prompt.
+        # Prepend role instructions directly into user prompt
         if system_message:
             full_prompt = f"<role>\n{system_message.strip()}\n</role>\n\n{prompt}"
         else:
             full_prompt = prompt
 
+        # For NVIDIA NIM, stream and collect content and reasoning_content chunks
+        if is_nvidia:
+            try:
+                full_content: list[str] = []
+                reasoning_chunks: list[str] = []
+                for chunk in chat.stream(full_prompt, **keyword_arguments):
+                    if (
+                        hasattr(chunk, "additional_kwargs")
+                        and chunk.additional_kwargs
+                        and "reasoning_content" in chunk.additional_kwargs
+                    ):
+                        reasoning_chunks.append(chunk.additional_kwargs["reasoning_content"])
+                    if hasattr(chunk, "content"):
+                        if isinstance(chunk.content, str):
+                            full_content.append(chunk.content)
+                        elif isinstance(chunk.content, list):
+                            for p in chunk.content:
+                                if isinstance(p, str):
+                                    full_content.append(p)
+                                elif isinstance(p, dict) and "text" in p:
+                                    full_content.append(p["text"])
+                res = "".join(full_content)
+                if not res.strip() and reasoning_chunks:
+                    res = "".join(reasoning_chunks)
+                if res.strip():
+                    return res
+            except Exception:
+                pass
+
         answer = chat.invoke(full_prompt, **keyword_arguments)
-        return answer.content
+        if hasattr(answer, "content"):
+            if isinstance(answer.content, str):
+                text = answer.content
+            elif isinstance(answer.content, list):
+                parts = []
+                for p in answer.content:
+                    if isinstance(p, str):
+                        parts.append(p)
+                    elif isinstance(p, dict) and "text" in p:
+                        parts.append(p["text"])
+                text = "".join(parts)
+            else:
+                text = str(answer.content)
+            if (
+                not text.strip()
+                and hasattr(answer, "additional_kwargs")
+                and "reasoning_content" in answer.additional_kwargs
+            ):
+                text = answer.additional_kwargs["reasoning_content"]
+            return text
+        return str(answer)
 
     def _ask(
         self,
@@ -286,6 +430,8 @@ class LlmClient:
         json_schema: dict | None,
         system_message: str | None = None,
         temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
     ) -> str:
         self.event_bus.emit(
             EventType.INFO,
@@ -300,7 +446,12 @@ class LlmClient:
             for attempt in range(max_attempts):
                 try:
                     response_text = self._call_model(
-                        prompt, json_schema, system_message, temperature=temperature
+                        prompt,
+                        json_schema,
+                        system_message,
+                        temperature=temperature,
+                        top_p=top_p,
+                        top_k=top_k,
                     )
                     error_text = ""
                     break

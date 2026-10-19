@@ -222,7 +222,9 @@ class RunLogWriter:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             # Format event timestamp and agent message
             timestamp = event.created_at.strftime("%Y-%m-%d %H:%M:%S")
-            line = f"[{timestamp}] [{event.agent_name:<16}] [{event.event_type:<10}] {event.message}\n"
+            line = (
+                f"[{timestamp}] [{event.agent_name:<16}] [{event.event_type:<10}] {event.message}\n"
+            )
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(line)
         except OSError:
@@ -237,4 +239,3 @@ def append_json_line(file_path: Path, data: dict[str, Any]) -> None:
             f.write(json.dumps(data) + "\n")
     except OSError:
         pass
-

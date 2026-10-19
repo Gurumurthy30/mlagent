@@ -26,11 +26,11 @@ from mlagent.graph.state import (
     TuningPlan,
 )
 
-# Event logging and notifications
-from mlagent.helper.events import EventType
-
 # Script rules text from contract
 from mlagent.helper.deliverable_checks import find_sample_submission
+
+# Event logging and notifications
+from mlagent.helper.events import EventType
 from mlagent.helper.script_contract import MODEL_SCRIPT_RULES_TEXT
 
 # Prompt templates and role definitions
@@ -108,7 +108,11 @@ def run_tuner(ledger: Ledger, agent_context: AgentContext) -> TuningPlan:
     exp_folder = agent_context.workspace.artifacts_folder / "experiments" / exp_id
     exp_folder.mkdir(parents=True, exist_ok=True)
     splits_file = agent_context.workspace.artifacts_folder / "splits.json"
-    features_script = agent_context.workspace.artifacts_folder / "features" / f"features_v{champion.feature_version}.py"
+    features_script = (
+        agent_context.workspace.artifacts_folder
+        / "features"
+        / f"features_v{champion.feature_version}.py"
+    )
     project_folder = agent_context.workspace.project_folder
 
     primary_metric = ledger.brief.primary_metric
@@ -123,6 +127,7 @@ def run_tuner(ledger: Ledger, agent_context: AgentContext) -> TuningPlan:
     if sample_path is not None:
         try:
             import pandas as pd
+
             sample_df = pd.read_csv(sample_path, nrows=2)
             if len(sample_df.columns) >= 2:
                 id_col = str(sample_df.columns[0])
@@ -218,9 +223,15 @@ def run_tuner(ledger: Ledger, agent_context: AgentContext) -> TuningPlan:
     run_record.cv_fold_scores = [float(s) for s in data.get("cv_fold_scores", [])]
     run_record.cv_mean = float(data.get("cv_mean")) if data.get("cv_mean") is not None else None
     run_record.cv_std = float(data.get("cv_std")) if data.get("cv_std") is not None else None
-    run_record.holdout_score = float(data.get("holdout_score")) if data.get("holdout_score") is not None else None
-    run_record.secondary_metrics = {k: float(v) for k, v in data.get("secondary_metrics", {}).items()}
-    run_record.top_feature_importances = {k: float(v) for k, v in data.get("top_feature_importances", {}).items()}
+    run_record.holdout_score = (
+        float(data.get("holdout_score")) if data.get("holdout_score") is not None else None
+    )
+    run_record.secondary_metrics = {
+        k: float(v) for k, v in data.get("secondary_metrics", {}).items()
+    }
+    run_record.top_feature_importances = {
+        k: float(v) for k, v in data.get("top_feature_importances", {}).items()
+    }
 
     # Extract error slices
     raw_slices = data.get("worst_error_slices", [])
