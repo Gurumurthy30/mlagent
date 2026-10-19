@@ -63,6 +63,7 @@ def run_eda_think(ledger: Ledger, agent_context: AgentContext) -> EdaQuestionPla
         EventType.AGENT_STARTED,
         AGENT_NAME,
         f"planning questions for EDA round {eda_round} of {max_rounds}",
+        ledger=ledger,
     )
 
     store = MemoryStore(agent_context.workspace.root)
@@ -219,7 +220,7 @@ def run_eda_read(
 def run_eda_blueprint(ledger: Ledger, agent_context: AgentContext) -> EdaBlueprint:
     # Synthesize all empirical findings into master data cleaning & feature blueprint via MemoryAssembler
     event_bus = agent_context.event_bus
-    event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, "synthesizing EDA blueprint")
+    event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, "synthesizing EDA blueprint", ledger=ledger)
 
     store = MemoryStore(agent_context.workspace.root)
     assembler = MemoryAssembler(store)

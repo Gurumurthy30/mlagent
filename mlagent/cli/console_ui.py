@@ -45,7 +45,7 @@ class ConsoleUI:
         self.console = console or Console(width=self.config.log_width)
         self.theme = get_theme(self.config.theme)
         self.symbols = get_symbols(self.config.ascii_only)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._is_plain = is_plain_mode(self.config, self.console)
         self._live: Live | None = None
         self._live_status_bar: LiveStatusBar | None = None
@@ -152,6 +152,10 @@ class ConsoleUI:
     def handle_event(self, event: AgentEvent) -> None:
         """Format and print an event to the terminal."""
         with self._lock:
+            # Sync ledger if event payload carries an active ledger
+            if "ledger" in event.data and hasattr(event.data["ledger"], "phase"):
+                self.update_ledger(event.data["ledger"])
+
             # Handle STATUS events specially: updates live line when Live is active
             if event.event_type == EventType.STATUS:
                 self._current_agent = event.agent_name
@@ -160,14 +164,24 @@ class ConsoleUI:
                 self._current_reason = (
                     self._truncate_status_message(raw_reason, max_length=40) if raw_reason else ""
                 )
-                if "ledger" in event.data and hasattr(event.data["ledger"], "phase"):
-                    if self._live_status_bar is not None:
-                        self._live_status_bar.ledger = event.data["ledger"]
                 if self._live_status_bar is not None and self._live is not None:
                     self._live_status_bar.update_status(
                         self._current_agent, self._current_action, self._current_reason
                     )
                     return
+
+            # When an agent starts, update active live status bar agent and action immediately
+            if event.event_type == EventType.AGENT_STARTED:
+                self._current_agent = event.agent_name
+                self._current_action = self._truncate_status_message(event.message)
+                raw_reason = str(event.data.get("reason", ""))
+                self._current_reason = (
+                    self._truncate_status_message(raw_reason, max_length=40) if raw_reason else ""
+                )
+                if self._live_status_bar is not None and self._live is not None:
+                    self._live_status_bar.update_status(
+                        self._current_agent, self._current_action, self._current_reason
+                    )
 
             if not self.should_display(event.event_type):
                 return

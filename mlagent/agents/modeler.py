@@ -135,6 +135,7 @@ def run_modeler(ledger: Ledger, agent_context: AgentContext) -> ModelPlan:
         EventType.AGENT_STARTED,
         AGENT_NAME,
         f"training {target_family} ({complexity_tier}) on features v{feature_version} for {exp_id}",
+        ledger=ledger,
     )
 
     primary_metric = ledger.brief.primary_metric

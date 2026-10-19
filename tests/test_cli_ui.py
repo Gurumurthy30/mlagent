@@ -318,3 +318,97 @@ def test_console_ui_updates_ledger_and_preserves_on_start_live() -> None:
         ui.stop_live()
 
 
+def test_console_ui_handle_event_updates_live_status_on_agent_started() -> None:
+    """ConsoleUI handle_event updates active agent, action, and ledger on AGENT_STARTED."""
+    cfg = UiConfig(mode="rich")
+    console = Console(record=True, width=100)
+    ui = ConsoleUI(console=console, config=cfg)
+    ui.start_live()
+    try:
+        ledger = Ledger(user_task="House Prices", phase="eda_analyst")
+        ledger.eda.eda_loops_used = 1
+        event = AgentEvent(
+            event_type=EventType.AGENT_STARTED,
+            agent_name="Data Analyst",
+            message="planning questions for EDA round 2 of 8",
+            data={"ledger": ledger},
+        )
+        ui.handle_event(event)
+
+        assert ui._current_agent == "Data Analyst"
+        assert "planning questions for EDA round 2 of 8" in ui._current_action
+        assert ui._live_status_bar.ledger is ledger
+        assert ui._live_status_bar.current_agent == "Data Analyst"
+    finally:
+        ui.stop_live()
+
+
+def test_live_status_bar_transitions_through_all_phases() -> None:
+    """LiveStatusBar stages and progress bars advance across Understand, Plan, Experiment, Deliver."""
+    import time
+
+    start_time = time.monotonic() - 60.0
+    cfg = UiConfig(theme="dark")
+    limits = LimitsConfig(max_eda_loops=8, max_experiment_loops=12)
+    status_bar = LiveStatusBar(cfg, start_time, limits=limits)
+    console = Console(record=True, width=120)
+
+    # 1. EDA loop 1
+    ledger = Ledger(user_task="House Prices", phase="eda_analyst")
+    ledger.eda.eda_loops_used = 0
+    status_bar.ledger = ledger
+    lines = list(status_bar.__rich_console__(console, None))  # type: ignore[arg-type]
+    assert "Understand (EDA 1/8)" in lines[0].plain
+    assert "EDA 1/8" in lines[2].plain
+
+    # 2. EDA loop 2
+    ledger.eda.eda_loops_used = 1
+    lines = list(status_bar.__rich_console__(console, None))  # type: ignore[arg-type]
+    assert "Understand (EDA 2/8)" in lines[0].plain
+    assert "EDA 2/8" in lines[2].plain
+
+    # 3. EDA Blueprint
+    ledger.eda.done = True
+    lines = list(status_bar.__rich_console__(console, None))  # type: ignore[arg-type]
+    assert "Understand (Blueprint)" in lines[0].plain
+    assert "EDA Blueprint" in lines[2].plain
+
+    # 4. Plan (Round 0 ml_lead)
+    ledger.phase = "ml_lead"
+    lines = list(status_bar.__rich_console__(console, None))  # type: ignore[arg-type]
+    assert "Understand (1 EDAs)" in lines[0].plain
+    assert "Plan" in lines[0].plain
+    assert "Planning" in lines[2].plain
+
+    # 5. Experiment (Feature Engineer / Modeler)
+    ledger.phase = "modeler"
+    ledger.iteration = 0
+    lines = list(status_bar.__rich_console__(console, None))  # type: ignore[arg-type]
+    assert "Experiment (round 1/12)" in lines[0].plain
+    assert "Round 1/12" in lines[2].plain
+
+    # 6. ML Lead Strategist for round 2 (should NOT go back to Plan)
+    from mlagent.graph.state import ExperimentRun
+    ledger.phase = "ml_lead"
+    ledger.iteration = 1
+    ledger.runs.append(
+        ExperimentRun(
+            experiment_id="EXP_001",
+            iteration=0,
+            model_family="lightgbm",
+            verdict="approve",
+            cv_mean=0.1234,
+        )
+    )
+    lines = list(status_bar.__rich_console__(console, None))  # type: ignore[arg-type]
+    assert "Experiment (round 2/12)" in lines[0].plain
+    assert "Round 2/12" in lines[2].plain
+
+    # 7. Deliver (Finalizer)
+    ledger.phase = "finalizer"
+    lines = list(status_bar.__rich_console__(console, None))  # type: ignore[arg-type]
+    assert "Deliver" in lines[0].plain
+    assert "Complete" in lines[2].plain
+
+
+

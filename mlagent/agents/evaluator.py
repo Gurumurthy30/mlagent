@@ -66,6 +66,7 @@ def run_evaluator(ledger: Ledger, agent_context: AgentContext) -> EvaluationVerd
         EventType.AGENT_STARTED,
         AGENT_NAME,
         f"auditing experiment {run.experiment_id} ({run.model_family})",
+        ledger=ledger,
     )
 
     # 1. Handle execution crash

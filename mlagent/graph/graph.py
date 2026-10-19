@@ -48,6 +48,7 @@ from mlagent.graph.routing import (
 
 # Graph master ledger state
 from mlagent.graph.state import Ledger
+from mlagent.helper.events import EventType
 
 # Workspace persistence
 from mlagent.helper.workspace import save_ledger
@@ -60,13 +61,24 @@ def build_pipeline_graph(agent_context: AgentContext) -> CompiledStateGraph:
     # 1. Data Engineer node
     def node_data_engineer(state: Ledger) -> Ledger:
         state.phase = "data_engineer"
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Data Engineer", "analyzing project data folder", ledger=state
+        )
         run_data_engineer(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="data_engineer")
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Data Engineer", "data inspection complete", ledger=state
+        )
         return state
 
     # 2. EDA Think node (executes think -> script -> read cycle)
     def node_eda_think(state: Ledger) -> Ledger:
         state.phase = "eda_analyst"
+        curr_round = state.eda.eda_loops_used + 1
+        max_eda = agent_context.config.limits.max_eda_loops
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Data Analyst", f"planning EDA round {curr_round} of {max_eda}", ledger=state
+        )
         plan = run_eda_think(state, agent_context)
         coder_data = execute_eda_script(plan, state, agent_context)
         summary = run_eda_read(coder_data, plan, state, agent_context)
@@ -76,71 +88,128 @@ def build_pipeline_graph(agent_context: AgentContext) -> CompiledStateGraph:
         elif state.eda.eda_loops_used >= agent_context.config.limits.max_eda_loops:
             state.eda.done = True
         save_ledger(agent_context.workspace, state, node_name="eda_think")
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Data Analyst", f"EDA round {state.eda.eda_loops_used} complete", ledger=state
+        )
         return state
 
     # 3. EDA Blueprint node
     def node_eda_blueprint(state: Ledger) -> Ledger:
         state.phase = "eda_analyst"
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Data Analyst", "synthesizing EDA blueprint", ledger=state
+        )
         run_eda_blueprint(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="eda_blueprint")
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Data Analyst", "EDA blueprint complete", ledger=state
+        )
         return state
 
     # 4. ML Lead Round 0 (validation locking)
     def node_ml_lead_round_0(state: Ledger) -> Ledger:
         state.phase = "ml_lead"
+        agent_context.event_bus.emit(
+            EventType.STATUS, "ML Lead", "locking validation protocol for Round 0", ledger=state
+        )
         run_ml_lead_round_0(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="ml_lead_round_0")
+        agent_context.event_bus.emit(
+            EventType.STATUS, "ML Lead", "Round 0 validation locked", ledger=state
+        )
         return state
 
     # 5. Feature Engineer node
     def node_feature_engineer(state: Ledger) -> Ledger:
         state.phase = "feature_engineer"
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Feature Engineer", f"engineering features for round {state.iteration + 1}", ledger=state
+        )
         run_feature_engineer(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="feature_engineer")
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Feature Engineer", f"features for round {state.iteration + 1} ready", ledger=state
+        )
         return state
 
     # 6. Modeler node
     def node_modeler(state: Ledger) -> Ledger:
         state.phase = "modeler"
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Modeler", f"training candidate model for round {state.iteration + 1}", ledger=state
+        )
         run_modeler(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="modeler")
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Modeler", f"model for round {state.iteration + 1} trained", ledger=state
+        )
         return state
 
     # 7. Tuner node
     def node_tuner(state: Ledger) -> Ledger:
         state.phase = "tuner"
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Tuner", f"tuning hyperparameters for round {state.iteration + 1}", ledger=state
+        )
         run_tuner(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="tuner")
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Tuner", f"hyperparameter tuning for round {state.iteration + 1} complete", ledger=state
+        )
         return state
 
     # 8. Evaluator node
     def node_evaluator(state: Ledger) -> Ledger:
         state.phase = "evaluator"
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Evaluator", f"auditing validation for round {state.iteration + 1}", ledger=state
+        )
         run_evaluator(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="evaluator")
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Evaluator", f"evaluation for round {state.iteration + 1} complete", ledger=state
+        )
         return state
 
     # 9. ML Lead strategist node
     def node_ml_lead(state: Ledger) -> Ledger:
         state.phase = "ml_lead"
+        agent_context.event_bus.emit(
+            EventType.STATUS, "ML Lead", f"formulating strategy for round {state.iteration + 1}", ledger=state
+        )
         run_ml_lead_hypothesis(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="ml_lead")
+        agent_context.event_bus.emit(
+            EventType.STATUS, "ML Lead", f"strategy for round {state.iteration + 1} formulated", ledger=state
+        )
         return state
 
     # 10. Finalizer node
     def node_finalizer(state: Ledger) -> Ledger:
         state.phase = "finalizer"
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Finalizer", "packaging champion model", ledger=state
+        )
         run_finalizer(state, agent_context)
         save_ledger(agent_context.workspace, state, node_name="finalizer")
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Finalizer", "champion model packaged", ledger=state
+        )
         return state
 
     # 11. Summarizer node
     def node_summarizer(state: Ledger) -> Ledger:
         state.phase = "summarizer"
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Summarizer", "generating final project summary", ledger=state
+        )
         run_summarizer(state, agent_context)
         state.phase = "done"
         state.status = "done"
         save_ledger(agent_context.workspace, state, node_name="summarizer")
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Summarizer", "pipeline completed", ledger=state
+        )
         return state
 
     # Register nodes
@@ -219,18 +288,31 @@ def run_pipeline(ledger: Ledger, agent_context: AgentContext) -> Ledger:
     try:
         final_state: Any = graph.invoke(ledger)
         if isinstance(final_state, Ledger):
+            agent_context.event_bus.emit(
+                EventType.STATUS, "Pipeline", "pipeline finished", ledger=final_state
+            )
             return final_state
         if isinstance(final_state, dict):
             # If LangGraph returns dictionary state, update ledger from it
-            return Ledger.model_validate(final_state)
+            res = Ledger.model_validate(final_state)
+            agent_context.event_bus.emit(
+                EventType.STATUS, "Pipeline", "pipeline finished", ledger=res
+            )
+            return res
         return ledger
     except AgentFailedError as exc:
         ledger.status = "failed"
         ledger.error_message = str(exc)
         save_ledger(agent_context.workspace, ledger)
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Pipeline", f"pipeline failed: {exc}", ledger=ledger
+        )
         return ledger
     except Exception as exc:
         ledger.status = "failed"
         ledger.error_message = f"Unexpected pipeline failure: {exc}"
         save_ledger(agent_context.workspace, ledger)
+        agent_context.event_bus.emit(
+            EventType.STATUS, "Pipeline", f"pipeline failed: {exc}", ledger=ledger
+        )
         return ledger

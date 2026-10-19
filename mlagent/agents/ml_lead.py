@@ -187,7 +187,7 @@ def generate_splits_file(
 def run_ml_lead_round_0(ledger: Ledger, agent_context: AgentContext) -> ValidationPlan:
     # Plan validation protocol and initialize Tier-1 baseline hypothesis via MemoryAssembler
     event_bus = agent_context.event_bus
-    event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, "locking validation protocol for Round 0")
+    event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, "locking validation protocol for Round 0", ledger=ledger)
 
     store = MemoryStore(agent_context.workspace.root)
     assembler = MemoryAssembler(store)
@@ -277,6 +277,7 @@ def run_ml_lead_hypothesis(ledger: Ledger, agent_context: AgentContext) -> Hypot
         EventType.AGENT_STARTED,
         AGENT_NAME,
         f"formulating hypothesis for iteration {iteration}",
+        ledger=ledger,
     )
 
     store = MemoryStore(agent_context.workspace.root)

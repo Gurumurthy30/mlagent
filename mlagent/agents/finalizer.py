@@ -95,6 +95,7 @@ def run_finalizer(ledger: Ledger, agent_context: AgentContext) -> DeliveryPlan:
         EventType.AGENT_STARTED,
         AGENT_NAME,
         f"packaging final deliverable based on Champion {champion.experiment_id} ({champion.model_family})",
+        ledger=ledger,
     )
 
     store = MemoryStore(agent_context.workspace.root)

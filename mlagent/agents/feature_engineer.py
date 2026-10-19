@@ -52,6 +52,7 @@ def run_feature_engineer(ledger: Ledger, agent_context: AgentContext) -> Feature
         EventType.AGENT_STARTED,
         AGENT_NAME,
         f"designing feature pipeline v{new_version} branching from Champion v{parent_version}",
+        ledger=ledger,
     )
 
     store = MemoryStore(agent_context.workspace.root)

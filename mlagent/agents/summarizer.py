@@ -39,6 +39,7 @@ def run_summarizer(ledger: Ledger, agent_context: AgentContext) -> SummarizerOut
         EventType.AGENT_STARTED,
         AGENT_NAME,
         "authoring project README.md from dynamic memory cards",
+        ledger=ledger,
     )
 
     schema_hint = SummarizerOutput.model_json_schema()

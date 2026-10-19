@@ -76,6 +76,7 @@ def run_tuner(ledger: Ledger, agent_context: AgentContext) -> TuningPlan:
         EventType.AGENT_STARTED,
         AGENT_NAME,
         f"tuning hyperparameters of Champion {champion.experiment_id} ({champion.model_family}) in {exp_id}",
+        ledger=ledger,
     )
 
     store = MemoryStore(agent_context.workspace.root)

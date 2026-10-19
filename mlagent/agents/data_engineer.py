@@ -210,7 +210,7 @@ def profile_data_folder(project_folder: Path) -> DatasetProfile:
 def run_data_engineer(ledger: Ledger, agent_context: AgentContext) -> ProjectScope:
     # Execute Stage 1 and Stage 2 Data Engineer agent
     event_bus = agent_context.event_bus
-    event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, "analyzing project data folder")
+    event_bus.emit(EventType.AGENT_STARTED, AGENT_NAME, "analyzing project data folder", ledger=ledger)
 
     project_folder = agent_context.workspace.project_folder
     

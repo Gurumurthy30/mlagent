@@ -394,8 +394,13 @@ def build_live_status_renderable(
     if phase in ("data_engineer", "eda_think", "eda_analyst", "eda_blueprint"):
         understand_state = "active"
     elif phase in ("ml_lead_round_0", "ml_lead"):
-        understand_state = "done"
-        plan_state = "active"
+        if len(ledger.runs) > 0 or ledger.iteration > 0:
+            understand_state = "done"
+            plan_state = "done"
+            exp_state = "active"
+        else:
+            understand_state = "done"
+            plan_state = "active"
     elif phase in ("feature_engineer", "modeler", "tuner", "evaluator", "experiment_loop"):
         understand_state = "done"
         plan_state = "done"
@@ -423,8 +428,11 @@ def build_live_status_renderable(
 
     eda_count = ledger.eda.eda_loops_used if (ledger.eda and ledger.eda.eda_loops_used) else 0
     if understand_state == "active":
-        under_round = min(eda_count + 1, max_eda)
-        under_name = f"Understand (EDA {under_round}/{max_eda})"
+        if getattr(ledger.eda, "done", False):
+            under_name = "Understand (Blueprint)"
+        else:
+            under_round = min(eda_count + 1, max_eda)
+            under_name = f"Understand (EDA {under_round}/{max_eda})"
     elif understand_state == "done" and eda_count > 0:
         under_name = f"Understand ({eda_count} EDAs)"
     else:
@@ -470,9 +478,16 @@ def build_live_status_renderable(
 
     # Compute progress bar depending on active phase
     if understand_state == "active":
-        curr_eda = min(eda_count + 1, max_eda)
-        pbar = format_progress_bar(curr_eda, max_eda, width=10, ascii_only=config.ascii_only)
-        pbar_label = f"EDA {curr_eda}/{max_eda}"
+        if getattr(ledger.eda, "done", False):
+            pbar = format_progress_bar(max_eda, max_eda, width=10, ascii_only=config.ascii_only)
+            pbar_label = "EDA Blueprint"
+        else:
+            curr_eda = min(eda_count + 1, max_eda)
+            pbar = format_progress_bar(curr_eda, max_eda, width=10, ascii_only=config.ascii_only)
+            pbar_label = f"EDA {curr_eda}/{max_eda}"
+    elif plan_state == "active":
+        pbar = format_progress_bar(1, 1, width=10, ascii_only=config.ascii_only)
+        pbar_label = "Planning"
     elif exp_state == "active":
         curr_round = min(ledger.iteration + 1, max_loops)
         pbar = format_progress_bar(curr_round, max_loops, width=10, ascii_only=config.ascii_only)
@@ -482,7 +497,7 @@ def build_live_status_renderable(
         pbar_label = "Complete"
     else:
         pbar = format_progress_bar(1, 1, width=10, ascii_only=config.ascii_only)
-        pbar_label = "Planning"
+        pbar_label = "Starting"
 
     line3 = Text()
     line3.append("Scoreboard: ", style=theme.muted)
