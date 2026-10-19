@@ -41,7 +41,7 @@ MODEL_SCRIPT_RULES_TEXT = """\
 2. Reuse input preparation from the features file (fit_preparation on train fold, apply_preparation on train and val).
 3. Use given random seed everywhere. Learn parameters strictly inside each split from train fold.
 4. Save inside the experiment folder: test_predictions.csv, val_predictions.csv, and model file.
-5. Predict test data in deliverable format (same row order and ID column as test.csv).
+5. Predict test data in exact deliverable format: test_predictions.csv columns MUST be [id_column, target_column] (use the exact target column name, NEVER 'prediction'). If test.csv has no ID column, use sample_submission IDs or 1 to N (1-indexed: 1, 2, ..., N), NEVER 0 to N-1!
 6. Time management: keep training bounded and print short progress lines after each split.
 7. NaN/Inf Safety: NEVER call np.isinf(df) or np.isnan(df) directly on DataFrames with string/object columns (raises TypeError). Use df.fillna(0.0) or select numeric columns first.
 8. GBDT Early Stopping: When using early stopping in LightGBM/XGBoost during CV, you MUST pass eval_set=[(X_va, y_va)] to .fit(). When training the final model on full train data, do NOT include early stopping callbacks without an eval set."""

@@ -35,6 +35,7 @@ from mlagent.graph.state import (
 from mlagent.helper.events import EventType
 
 # Script rules text from contract
+from mlagent.helper.deliverable_checks import find_sample_submission
 from mlagent.helper.script_contract import MODEL_SCRIPT_RULES_TEXT
 
 # Prompt templates and role definitions
@@ -175,6 +176,18 @@ def run_modeler(ledger: Ledger, agent_context: AgentContext) -> ModelPlan:
     id_cols = ledger.brief.id_columns
     id_col = id_cols[0] if id_cols else "Id"
 
+    # Align with sample submission if present
+    sample_path = find_sample_submission(ledger.brief, project_folder)
+    if sample_path is not None:
+        try:
+            import pandas as pd
+            sample_df = pd.read_csv(sample_path, nrows=2)
+            if len(sample_df.columns) >= 2:
+                id_col = str(sample_df.columns[0])
+                target_col = str(sample_df.columns[1])
+        except Exception:
+            pass
+
     coder_task = (
         f"Train model experiment {exp_id} using {plan.model_family} on feature version v{feature_version}.\n\n"
         f"Working Directory: {exp_folder}\n"
@@ -278,7 +291,8 @@ def run_modeler(ledger: Ledger, agent_context: AgentContext) -> ModelPlan:
         "   - NEVER call np.isinf(df) or np.isnan(df) on DataFrames (raises TypeError: ufunc 'isinf' not supported)! Use df.select_dtypes(include=[np.number]).replace([np.inf, -np.inf], 0.0).fillna(0.0).\n\n"
         "6. REQUIRED FILES TO WRITE IN WORKING DIRECTORY:\n"
         f"   - val_predictions.csv (columns: ['{id_col}', 'fold', 'prediction'])\n"
-        f"   - test_predictions.csv (columns: ['{id_col}', 'prediction'])\n"
+        f"   - test_predictions.csv (columns: ['{id_col}', '{target_col}'] - MANDATORY: use '{target_col}', NOT 'prediction')!\n"
+        f"   - For '{id_col}' in test_predictions: if '{id_col}' is in test_df.columns, use test_df['{id_col}']. If test_df has no ID column, check if sample submission exists to take its IDs; otherwise generate IDs from 1 to N (1-indexed: np.arange(1, len(test_df) + 1)), NEVER 0 to N-1!\n"
         "   - model.pkl (saved via joblib.dump)\n"
         "7. Output JSON tagged with <MODEL_RESULT>."
     )

@@ -120,10 +120,13 @@ def test_summarizer_produces_all_8_required_readme_sections(tmp_path: Path) -> N
     ledger = Ledger()
     output = run_summarizer(ledger, context)
 
-    # Verify README.md written to workspace
+    # Verify README.md written to workspace and report folder
     readme_path = workspace.root / "README.md"
     assert readme_path.exists()
+    report_readme_path = workspace.report_folder / "README.md"
+    assert report_readme_path.exists()
     content = readme_path.read_text(encoding="utf-8")
+    assert report_readme_path.read_text(encoding="utf-8") == content
 
     # Assert all 8 sections are present
     required_sections = [
@@ -141,6 +144,65 @@ def test_summarizer_produces_all_8_required_readme_sections(tmp_path: Path) -> N
 
     # Verify return value
     assert "README.md successfully generated" in output.cli_summary
+
+
+def test_align_and_save_predictions_uses_target_and_1_to_n_ids(tmp_path: Path) -> None:
+    import pandas as pd
+    from mlagent.agents.finalizer import _align_and_save_predictions
+    from mlagent.graph.state import ProjectBrief
+
+    # Scenario 1: No sample submission, input has 0-indexed IDs and 'prediction' column
+    src_csv = tmp_path / "raw_preds.csv"
+    pd.DataFrame({"id": [0, 1, 2, 3], "prediction": [10.5, 20.1, 15.3, 30.0]}).to_csv(src_csv, index=False)
+
+    dest_1 = tmp_path / "out1" / "predictions.csv"
+    dest_2 = tmp_path / "report" / "predictions.csv"
+    brief = ProjectBrief(
+        task_family="regression",
+        target_column="SalePrice",
+        id_columns=["Id"],
+        primary_metric="rmse",
+    )
+
+    _align_and_save_predictions(
+        src_path=src_csv,
+        dst_paths=[dest_1, dest_2],
+        brief=brief,
+        project_folder=tmp_path,
+    )
+
+    for dst in [dest_1, dest_2]:
+        assert dst.exists()
+        df = pd.read_csv(dst)
+        assert list(df.columns) == ["Id", "SalePrice"]
+        # Must be 1 to N (1, 2, 3, 4), NEVER 0 to N-1 (0, 1, 2, 3)
+        assert list(df["Id"]) == [1, 2, 3, 4]
+        assert list(df["SalePrice"]) == [10.5, 20.1, 15.3, 30.0]
+
+    # Scenario 2: With sample submission (e.g. Digit Recognizer: ImageId, Label)
+    from mlagent.graph.state import DatasetProfile, FileProfile
+    sample_sub = tmp_path / "sample_submission.csv"
+    pd.DataFrame({"ImageId": [1, 2, 3], "Label": [0, 0, 0]}).to_csv(sample_sub, index=False)
+    brief.profile = DatasetProfile(
+        project_folder=str(tmp_path),
+        files=[FileProfile(path="sample_submission.csv", inferred_role="sample_submission")],
+    )
+
+    src_sub = tmp_path / "model_out.csv"
+    pd.DataFrame({"Id": [99, 99, 99], "prediction": [7, 2, 9]}).to_csv(src_sub, index=False)
+
+    _align_and_save_predictions(
+        src_path=src_sub,
+        dst_paths=[dest_1, dest_2],
+        brief=brief,
+        project_folder=tmp_path,
+    )
+
+    for dst in [dest_1, dest_2]:
+        df = pd.read_csv(dst)
+        assert list(df.columns) == ["ImageId", "Label"]
+        assert list(df["ImageId"]) == [1, 2, 3]
+        assert list(df["Label"]) == [7, 2, 9]
 
 
 def test_summarizer_reads_cards_from_store_not_raw_ledger(tmp_path: Path) -> None:

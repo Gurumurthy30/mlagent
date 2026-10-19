@@ -60,9 +60,16 @@ def run_summarizer(ledger: Ledger, agent_context: AgentContext) -> SummarizerOut
     except Exception as exc:
         raise AgentFailedError(f"Summarizer generation failed: {exc}") from exc
 
-    # Write README.md to workspace root and project root
+    # Write README.md to workspace root, report folder, and project root
     workspace_readme = workspace.root / "README.md"
     workspace_readme.write_text(output.readme_markdown, encoding="utf-8")
+
+    report_readme = workspace.report_folder / "README.md"
+    try:
+        workspace.report_folder.mkdir(parents=True, exist_ok=True)
+        report_readme.write_text(output.readme_markdown, encoding="utf-8")
+    except OSError:
+        pass
 
     project_readme = workspace.project_folder / "README.md"
     try:

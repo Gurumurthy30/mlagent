@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-
+from typing import Any
+import numpy as np
 import pandas as pd
 
 # Agent execution context and exceptions
@@ -24,7 +25,7 @@ from mlagent.graph.state import (
 )
 
 # Deliverable file verification
-from mlagent.helper.deliverable_checks import check_predictions_file
+from mlagent.helper.deliverable_checks import check_predictions_file, find_sample_submission
 
 # Event logging and notifications
 from mlagent.helper.events import EventType
@@ -80,6 +81,98 @@ def _blend_test_predictions(
     return True
 
 
+def _align_and_save_predictions(
+    src_path: Path,
+    dst_paths: list[Path],
+    brief: Any,
+    project_folder: Path,
+) -> None:
+    # Post-process predictions: align with sample submission or contract, enforce 1-to-N IDs
+    if not src_path.exists():
+        return
+    try:
+        df = pd.read_csv(src_path)
+    except Exception:
+        for dst in dst_paths:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_path, dst)
+        return
+
+    sample_path = find_sample_submission(brief, project_folder)
+    if sample_path is not None:
+        try:
+            sample_df = pd.read_csv(sample_path)
+            aligned_df = pd.DataFrame()
+            id_col = sample_df.columns[0]
+            if id_col in df.columns:
+                aligned_df[id_col] = df[id_col]
+            else:
+                first_col = df.columns[0]
+                if first_col.lower() in ["id", "imageid", "row_id", "sample_id", "index"] or len(df.columns) > 1:
+                    aligned_df[id_col] = df[first_col]
+                else:
+                    aligned_df[id_col] = sample_df[id_col].values[:len(df)]
+
+            for idx, target_col in enumerate(sample_df.columns[1:], start=1):
+                if target_col in df.columns:
+                    aligned_df[target_col] = df[target_col]
+                elif "prediction" in df.columns:
+                    aligned_df[target_col] = df["prediction"]
+                elif len(df.columns) > idx:
+                    aligned_df[target_col] = df.iloc[:, idx]
+                elif len(df.columns) == 1:
+                    aligned_df[target_col] = df.iloc[:, 0]
+                else:
+                    aligned_df[target_col] = sample_df[target_col].values[:len(df)]
+
+            if len(aligned_df) == len(sample_df):
+                aligned_df[sample_df.columns[0]] = sample_df.iloc[:, 0].values
+
+            aligned_df = aligned_df.reindex(columns=sample_df.columns)
+            df = aligned_df
+        except Exception:
+            pass
+    else:
+        target_col = brief.target_column or "target"
+        id_cols = brief.id_columns
+        id_col = id_cols[0] if id_cols else "Id"
+
+        if len(df.columns) == 1:
+            val_col = df.columns[0]
+            ids = np.arange(1, len(df) + 1)
+            df = pd.DataFrame({id_col: ids, target_col: df[val_col]})
+        elif len(df.columns) >= 2:
+            rename_dict = {}
+            if "prediction" in df.columns and target_col not in df.columns:
+                rename_dict["prediction"] = target_col
+
+            first_col = df.columns[0]
+            if first_col != id_col and (first_col.lower() in ["id", "imageid", "row_id", "index", "unnamed: 0"] or first_col == "0"):
+                rename_dict[first_col] = id_col
+
+            if rename_dict:
+                df = df.rename(columns=rename_dict)
+
+            if target_col not in df.columns and len(df.columns) >= 2:
+                cols = list(df.columns)
+                cols[1] = target_col
+                df.columns = cols
+
+            if id_col not in df.columns:
+                df.insert(0, id_col, np.arange(1, len(df) + 1))
+            else:
+                id_vals = df[id_col].to_numpy()
+                if len(id_vals) > 0 and id_vals[0] == 0 and id_vals[-1] == len(df) - 1:
+                    df[id_col] = np.arange(1, len(df) + 1)
+
+            if id_col in df.columns and target_col in df.columns:
+                df = df[[id_col, target_col]]
+
+    for dst in dst_paths:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(dst, index=False)
+
+
 def run_finalizer(ledger: Ledger, agent_context: AgentContext) -> DeliveryPlan:
     # Finalize delivery package and write technical report via MemoryAssembler
     event_bus = agent_context.event_bus
@@ -123,10 +216,14 @@ def run_finalizer(ledger: Ledger, agent_context: AgentContext) -> DeliveryPlan:
     except Exception as exc:
         raise AgentFailedError(f"Finalizer planning failed: {exc}") from exc
 
-    # Set up final deliverables directory
+    # Set up final deliverables directories (artifacts/final and report/)
     final_dir = agent_context.workspace.artifacts_folder / "final"
     final_dir.mkdir(parents=True, exist_ok=True)
+    report_dir = agent_context.workspace.report_folder
+    report_dir.mkdir(parents=True, exist_ok=True)
+
     predictions_file = final_dir / "predictions.csv"
+    report_predictions_file = report_dir / "predictions.csv"
 
     # Ensembling or champion copy
     is_blended = False
@@ -140,13 +237,29 @@ def run_finalizer(ledger: Ledger, agent_context: AgentContext) -> DeliveryPlan:
         else:
             raise AgentFailedError(f"Champion predictions {champ_test} do not exist.")
 
-    # Copy champion model file
+    # Align predictions columns and IDs and save to both artifacts/final and report/
+    _align_and_save_predictions(
+        src_path=predictions_file,
+        dst_paths=[predictions_file, report_predictions_file],
+        brief=ledger.brief,
+        project_folder=agent_context.workspace.project_folder,
+    )
+
+    # Copy champion model file to both final_dir and report_dir
     serialized_model_path = ""
     champ_model = Path(champion.model_path)
     if champ_model.exists():
         target_model = final_dir / champ_model.name
         shutil.copy2(champ_model, target_model)
         serialized_model_path = str(target_model)
+
+        report_model = report_dir / champ_model.name
+        shutil.copy2(champ_model, report_model)
+        if champ_model.name != "model.pkl":
+            try:
+                shutil.copy2(champ_model, report_dir / "model.pkl")
+            except Exception:
+                pass
 
     # Deliverable format checks
     problems = check_predictions_file(
@@ -178,7 +291,10 @@ def run_finalizer(ledger: Ledger, agent_context: AgentContext) -> DeliveryPlan:
             f"{drift.warning_threshold} | {drift.retrain_threshold} | {drift.action} |\n"
         )
 
-    report_file.write_text("".join(report_content), encoding="utf-8")
+    full_report_text = "".join(report_content)
+    report_file.write_text(full_report_text, encoding="utf-8")
+    (report_dir / "report.md").write_text(full_report_text, encoding="utf-8")
+    (report_dir / "technical_report.md").write_text(full_report_text, encoding="utf-8")
 
     # Update ledger final record
     ledger.final = FinalDeliverable(
@@ -189,9 +305,9 @@ def run_finalizer(ledger: Ledger, agent_context: AgentContext) -> DeliveryPlan:
         final_cv_score=champion.cv_mean,
         final_holdout_score=champion.holdout_score,
         final_secondary_metrics=champion.secondary_metrics,
-        predictions_path=str(predictions_file),
+        predictions_path=str(report_predictions_file),
         serialized_pipeline_path=serialized_model_path,
-        report_path=str(report_file),
+        report_path=str(report_dir / "report.md"),
         deployment_checks_passed=(len(problems) == 0),
         check_messages=problems,
         monitoring_plan=plan.monitoring_and_maintenance_plan,
