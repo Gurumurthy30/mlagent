@@ -1,322 +1,359 @@
 # mlagent
 
 <p align="center">
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg" alt="Python Version"></a>
-  <a href="https://ollama.com"><img src="https://img.shields.io/badge/Ollama-local%20llm-orange.svg" alt="Ollama"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"></a>
+  <a href="#"><img src="https://img.shields.io/badge/status-alpha-orange.svg?style=flat-square" alt="Alpha Status"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg?style=flat-square" alt="Python Version"></a>
+  <a href="https://ollama.com"><img src="https://img.shields.io/badge/Ollama-local%20llm-blueviolet.svg?style=flat-square" alt="Ollama"></a>
+  <a href="https://build.nvidia.com/"><img src="https://img.shields.io/badge/NVIDIA-NIM%20supported-76b900.svg?style=flat-square" alt="NVIDIA NIM"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" alt="License"></a>
+  <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/badge/code%20style-ruff-000000.svg?style=flat-square" alt="Ruff"></a>
 </p>
 
 <p align="center">
-  <strong>An autonomous multi-agent machine learning engineering system that takes projects from raw data to validated ensemble predictions.</strong>
+  <strong>Autonomous Multi-Agent Machine Learning Engineering Pipeline</strong><br/>
+  <em>From raw data to verified champion ensembles — orchestrated by local LLMs with zero data leakage.</em>
 </p>
 
----
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Gurumurthy30/mlagent/main/docs/assets/mlagent_demo.gif" alt="mlagent in action" width="850">
+</p>
 
-`mlagent` operates directly in your project folder. You launch one command, describe your task in natural language, and an orchestrated team of specialized agents handles the rest: exploring data, structuring cross-validation, engineering leak-free features, exploring model architectures, tuning hyperparameters, validating against leakage, and compiling final predictions with an executive technical report.
-
-All language model calls run locally through [Ollama](https://ollama.com) via LangGraph orchestration—keeping your data and models 100% private on your machine.
-
----
-
-## 💡 Key Innovations
-
-* **Exhaustive EDA & Feature Engineering Probes**: Moves beyond basic `.describe()` checklists to automated string decomposition, group-relative stats, missingness architecture, and target-encoded features.
-* **Leak-Free Fold Isolation**: Strictly enforces that all feature engineering and transformations fit inside training folds (`fit_preparation` / `apply_preparation`).
-* **Robust Coder Self-Repair**: Equipped with automatic traceback fixing, library lookups, and pre-flight assertions.
-* **Independent Verification & Anti-Leakage Guard**: The Evaluator independently recomputes validation scores and holdout metrics to prevent false discoveries and data leakage.
-* **Dynamic Memory Architecture & Technical Summarizer**: Converts all ledger transactions into typed, append-only memory cards (`workspace/memory/cards/`) with strict write-time compression. A dedicated `MemoryAssembler` injects only the required cards into per-agent prompt blocks without leaking raw state, and a terminal `Summarizer` agent synthesizes the entire journey into a publication-ready `README.md`.
-* **Single Mutable Truth (Champion Ratchet)**: Only the `champion_pointer` is updated in place upon verified promotion; all experiments, hypotheses, and verdicts are strictly immutable.
+```
+╭── Stage Tracker ─────────────────────────────────────────────────────────────────────────────────╮
+│ ● Understand  →  ● Plan  →  ◉ Experiment (round 3/8)  →  ○ Deliver                               │
+│                                                                                                  │
+│ Now:        Modeler training LightGBM with tree-depth 6 and learning-rate 0.03 (elapsed: 02m 14s) │
+│ Scoreboard: Champion CV RMSE: 0.1210 | Baseline: 0.1420 | Approved: 3/3 | Total Runtime: 14m 22s │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
 
 ---
 
-## 🧠 Memory Architecture
+## 💡 Why mlagent?
 
-`mlagent v3` replaces raw state dumps with a typed, append-only dynamic memory manager and automated technical summarizer:
+Most existing AutoML solutions operate as opaque "black boxes": they throw brute-force grid searches across standard classifiers without inspecting the domain, understanding feature interactions, or auditing for data leakage.
 
-- **Append-Only Memory Cards**: Findings, hypotheses, runs, verdicts, and feature versions are written once and never mutated (`mlagent/memory/cards.py`).
-- **Single Mutable Truth**: Only `champion_pointer` (`memory/cards/champion_pointer/current.json`) is updated in place, strictly preserving the Champion-vs-Challenger linear ratchet.
-- **MemoryAssembler**: Formulates per-agent prompts using `<system>`, `<memory>`, `<task>`, `<schema>` blocks with priority tiering (`core` > `high` > `medium` > `low`), guaranteeing protected cards (`project_brief`, `champion_pointer`, `validation_plan`) are never trimmed.
-- **Technical Summarizer**: Concludes the pipeline (`finalizer -> summarizer -> END`) by reading the compressed memory story and writing a comprehensive, user-facing `README.md` with all 8 standard sections.
+Real-world machine learning engineering requires thoughtful exploration, hypothesis generation, fold-isolated feature transformations, diagnostic auditing, and executive communication.
 
-See [docs/memory_architecture.md](docs/memory_architecture.md) for complete details.
+| Capability | Traditional AutoML | Human ML Engineer | **mlagent** |
+|---|---|---|---|
+| **Data Understanding** | Basic column statistics | Deep EDA, anomaly discovery, domain scoping | **Autonomous EDA loop with hypothesis testing** |
+| **Feature Engineering** | Static pre-baked encoders | Creative group aggregates, lags, interaction terms | **Iterative feature branching with fold isolation** |
+| **Leakage Prevention** | Often leaks across CV | Manual pipeline discipline | **Strict fold-isolation enforcement (`fit_preparation`)** |
+| **Generalization Audit** | Often overfits validation | Independent holdout audits, error slice inspection | **Independent Evaluator with Champion Ratchet** |
+| **Self-Repairing Code** | Crashes on script bugs | Interactive debugging | **Sub-agent Coder with automated traceback repair** |
+| **Privacy & Sovereignty** | Sends data to cloud APIs | Runs on internal compute | **100% offline via Ollama or enterprise via NVIDIA NIM** |
+| **Deliverables & Audit** | Raw pickle file | Presentation, report, clean submission | **8-section publication README, predictions, serialized model** |
 
 ---
 
 ## ⚡ Quickstart
 
-Run `mlagent` directly in any directory containing your dataset:
+Install and run `mlagent` in any folder containing your dataset with three commands:
 
-```powershell
-# 1. Navigate to your ML project folder
-cd C:\my_ml_project
+```bash
+# 1. Install mlagent
+pip install mlagent
 
-# 2. Launch the multi-agent pipeline
+# 2. Navigate to your project folder
+cd my_ml_project
+
+# 3. Launch the autonomous pipeline
 mlagent start
 ```
 
-When prompted, simply describe your objective:
-```
-> What is the task? Predict customer churn. Train is train.csv, test is test.csv.
-> What are the primary metrics? macro F1 mainly, also report AUC
+### The Interactive Prompt
+
+When you launch `mlagent start`, the system scans your directory and prompts for your objective:
+
+```text
+> What is the task? Predict house sale prices from tabular features (train.csv, test.csv).
+> What are the primary metrics? RMSE (root mean squared error), lower is better.
 ```
 
-The agents immediately probe the environment, inspect the datasets, and begin iterative development.
+`mlagent` handles everything from this point: profiling dataset files, generating exploratory scripts, locking validation folds, testing feature ideas, training models, tuning hyperparameters, and compiling deliverables.
+
+> **LLM Provider Setup:**
+> - **Local (Default):** Install [Ollama](https://ollama.com) and pull the default model: `ollama pull gemma4:31b`
+> - **NVIDIA NIM (Cloud):** Set `export NVIDIA_API_KEY="nvapi-..."` and pass `--set llm.provider=nvidia`
 
 ---
 
-## 📦 Installation
+## 📦 What You Get
 
-<p>
-  <a href="#-windows-cmd"><img src="https://img.shields.io/badge/Platform-cmd-blue?style=for-the-badge&logo=windows" alt="cmd"></a>
-  <a href="#-linux--wsl-bash"><img src="https://img.shields.io/badge/Platform-bash-green?style=for-the-badge&logo=gnu-bash" alt="bash"></a>
-  <a href="#-macos-mac"><img src="https://img.shields.io/badge/Platform-mac-lightgrey?style=for-the-badge&logo=apple" alt="mac"></a>
-</p>
+When `mlagent` completes its run, all outputs are structured inside `mlagent_workspace/` and mirrored to `report/`:
 
-### Select Your Platform
-
-<details open id="-windows-cmd">
-<summary><b>💻 Windows Command Prompt (cmd)</b></summary>
-
-```cmd
-python -m venv .venv
-.venv\Scripts\activate.bat
-python -m pip install --upgrade pip
-pip install -e .
 ```
-</details>
-
-<details id="-linux--wsl-bash">
-<summary><b>🐧 Linux / WSL (bash)</b></summary>
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -e .
-```
-</details>
-
-<details id="-macos-mac">
-<summary><b>🍎 macOS (mac)</b></summary>
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -e .
-```
-</details>
-
-<details>
-<summary><b>⚡ Windows PowerShell</b></summary>
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -e .
-```
-</details>
-
-### Extra Dependencies
-
-Install domain-specific packages as needed:
-
-```bash
-pip install -e ".[deep]"        # PyTorch, transformers, timm, sentence-transformers
-pip install -e ".[audio]"       # librosa, soundfile
-pip install -e ".[vision]"      # opencv-python
+my_ml_project/
+├── README.md                      # Comprehensive 8-section publication report
+├── report/
+│   ├── predictions.csv            # Test set predictions formatted with 1-to-N IDs
+│   ├── model.pkl                  # Production-ready serialized champion pipeline
+│   └── README.md                  # Mirrored executive technical report
+└── mlagent_workspace/
+    ├── config.yaml                # Effective run configuration
+    ├── artifacts/
+    │   ├── splits.json            # Repeatable, leak-free CV split definitions
+    │   ├── features/              # Versioned feature transformation scripts
+    │   └── final/                 # Final serialized model and prediction artifacts
+    ├── memory/cards/              # Append-only audit trail (findings, runs, ratchet)
+    └── logs/                      # Full run.log, llm_calls.jsonl, commands.log
 ```
 
-### 🦙 Ollama Setup
-
-1. Download and install [Ollama](https://ollama.com). Ollama runs in the background at `http://localhost:11434`.
-2. Pull the default model:
-   ```bash
-   ollama pull gemma4:31b
-   ```
-   *(You can also use other models such as `qwen2.5:32b` or `llama3.3:70b` by setting `llm.name` in `config.yaml`)*
-3. Verify environment and GPU detection at any time:
-   ```bash
-   python -m mlagent.environment_probe
-   ```
+- **`report/predictions.csv`**: Accurately mapped predictions using the target column name and sample submission schema (with 1-to-N IDs, never 0-indexed).
+- **`report/model.pkl`**: Fully self-contained Python pipeline serializing imputers, encoders, and the champion model/ensemble ready for `joblib.load()`.
+- **`README.md`**: Publication-grade technical report generated by the Technical Summarizer containing dataset specs, EDA findings register, validation guarantees, round-by-round Champion Journey table, top feature importances, failure modes, and drift monitoring specifications.
 
 ---
 
-## 🚀 Usage & Commands
+## 🧠 How It Works
 
-```bash
-mlagent start
-```
+`mlagent` coordinates an ensemble of specialized agents using a compiled [LangGraph](https://github.com/langchain-ai/langgraph) state machine. State is managed through typed, append-only **Memory Cards** and a **Linear Champion Ratchet**.
 
-| Command | Description |
-|---|---|
-| `mlagent start` | Start interactive execution or resume an existing run |
-| `mlagent resume [folder]` | Resume an interrupted run directly without prompting |
-| `mlagent status [folder]` | Inspect current progress and scoreboard without interrupting the active run |
-| `mlagent config` | Print effective configuration with source hierarchy (CLI > file > default) |
-| `mlagent init-config` | Generate a starter `config.yaml` template |
-| `mlagent --version` | Display version information |
-
-### Useful CLI Flags
-
-- `--set section.key=value`: Override any configuration parameter directly from the command line.
-- `-v, --verbose`: Detailed logging output including script runs and diagnostics.
-- `-q, --quiet`: Compact log output showing milestones and final results.
-- `--plain`: Plain-text mode without ANSI styling or Live area (ideal for CI/CD or logging pipes).
-- `-y, --yes`: Skip confirmation prompt on launch.
-
----
-
-## 🤖 The Agent Team
-
-Ten collaborative agents coordinated via LangGraph:
+### Pipeline Architecture
 
 ```mermaid
 flowchart TD
-  A([mlagent start]) --> DE[Data Engineer] --> DA[Data Analyst]
-  DA -->|loop until eda.done| DA
-  DA -->|done| ML[ML Lead] --> SC{stop check}
-  SC -->|features| FE[Feature Engineer]
-  SC -->|model| M[Modeler]
-  SC -->|tune| T[Tuner]
-  SC -->|data| DR[Data Analyst revisit]
-  FE --> M
-  DR --> FE
-  M --> E[Evaluator]
-  T --> E
-  E --> R[Reviewer] --> SC
-  SC -->|stop| S[Submitter] --> RP[Report] --> Z([report and predictions])
+  START([mlagent start]) --> DE[Data Engineer]
+  DE -->|Dataset Profile| EDA[Data Analyst: EDA Think]
+  EDA -->|Plan Script| C1[Coder: Execute & Repair]
+  C1 -->|Execution Output| EDR[Data Analyst: Read & Findings]
+  EDR -->|More Doubts?| EDA
+  EDR -->|Sufficient Findings| EDB[Data Analyst: Blueprint]
+  
+  EDB --> ML0[ML Lead: Round 0 Baseline]
+  ML0 -->|Lock Folds & Harness| FE[Feature Engineer]
+  
+  subgraph Experiment_Loop ["Iterative Experiment Loop"]
+    FE -->|Feature Pipeline vN| MOD[Modeler]
+    MOD -->|Candidate Run| EVAL[Evaluator: Audit & Ratchet]
+    EVAL -->|Challenger Rejected / Approved| STRAT[ML Lead: Strategist]
+    STRAT -->|Feature Hypothesis| FE
+    STRAT -->|Model Exploration| MOD
+    STRAT -->|Tune Champion| TUN[Tuner: Optuna]
+    TUN --> EVAL
+    STRAT -->|Distribution Doubt| EDA
+  end
+  
+  STRAT -->|Stopping Criterion Met| FIN[Finalizer]
+  FIN -->|Package Deliverable| SUM[Technical Summarizer]
+  SUM --> END([Verified Production Release])
 ```
 
-| Agent | Responsibility |
-|---|---|
-| **Data Engineer** | Inspects project directory, analyzes file schemas, and builds the initial Project Brief. |
-| **Data Analyst** | Discovers correlations, distributions, data shifts, and informative missingness patterns. |
-| **ML Lead** | Plans the cross-validation strategy, sets metrics, and establishes baseline description. |
-| **Feature Engineer** | Designs leak-free transformation pipelines and screens candidate ideas on fixed folds. |
-| **Modeler** | Explores diverse model families (LightGBM, CatBoost, XGBoost, Ridge, MLP, Ensembles). |
-| **Evaluator** | Independently audits score honesty, verifies holdout generalization, and checks for leakage. |
-| **Tuner** | Performs bounded Bayesian hyperparameter optimization on top-performing architectures. |
-| **Reviewer** | Evaluates iteration trajectories, records empirical findings, and steers next-round focus. |
-| **Submitter** | Verifies deliverable schema compliance and blends top models into final ensemble. |
-| **Coder** | Sub-agent that writes, executes, and self-repairs code with automated error recovery. |
+### The Agent Roster
+
+| Agent | Charter & Responsibility | Deliverable Artifact |
+|---|---|---|
+| **Data Engineer** | Profiles directory files, detects modalities, flags missing values, and scopes problem statement. | `ProjectBriefCard` |
+| **Data Analyst** | Plans exploratory probes, disproves distribution hypotheses, and creates cleaning blueprints. | `EdaFindingsCard`, `PrepSpecCard` |
+| **ML Lead** | Locks cross-validation strategy in Round 0, formulates hypotheses, and steers iterative direction. | `ValidationPlanCard`, `HypothesisCard` |
+| **Feature Engineer** | Crafts fold-isolated feature pipelines (`fit_preparation` / `apply_preparation`) branching from Champion. | Feature scripts `v1`, `v2`, ... |
+| **Modeler** | Trains candidate algorithms across complexity tiers (Ridge, LightGBM, XGBoost, CatBoost, NN). | Model checkpoints, CV metrics |
+| **Tuner** | Executes bounded Bayesian hyperparameter optimization (Optuna) on approved Champion models. | Tuned hyperparameter sets |
+| **Evaluator** | Independently audits validation scores, tests holdout generalization, and gates the Champion Ratchet. | `EvaluationVerdictCard` |
+| **Finalizer** | Evaluates ensembling strategies (blending vs single champion) and authors drift monitoring specs. | `FinalDeliverableCard` |
+| **Summarizer** | Synthesizes the end-to-end development trajectory into the authoritative 8-section `README.md`. | Publication `README.md` |
+| **Coder** | Embedded code execution sub-agent with sandboxed execution, syntax validation, and traceback self-repair. | Executable scripts & outputs |
+
+### The Champion Linear Ratchet
+
+To guarantee monotonic progress and eliminate false discoveries, `mlagent` enforces a strict **Single Mutable Truth**:
+
+1. **Round 0 Baseline**: A simple, transparent model (e.g. Ridge / Logistic Regression) locks the validation harness and sets the baseline score.
+2. **Strict Challenger Hurdle**: A new candidate is approved **only** if:
+   - Its cross-validation score strictly beats the Champion's score.
+   - Its holdout score does not exhibit anomalous generalization drop (`< holdout_gap_std_multiplier * cv_std`).
+   - Its score jump is not accompanied by data leakage flags.
+3. **In-Place Pointer Mutation**: Only `memory/cards/champion_pointer/current.json` is updated upon an approved verdict. All candidate runs, rejected hypotheses, and historical experiments remain immutable for auditability.
 
 ---
 
-## 🖥️ Terminal Experience
+## 🎯 Supported Tasks & Status
 
-Underneath the scrolling event log, a 3-line live status display updates in place:
-
-1. **Stage Tracker**: `● Understand  →  ● Plan  →  ◉ Experiment (round 2/8)  →  ○ Deliver`
-2. **Now**: The active agent, its current action, rationale, and runtime.
-3. **Scoreboard**: Current best validation score, metric name and direction, approved runs count, and total elapsed runtime.
-
-### End-of-Run Summary
-
-When execution finishes, a summary panel is displayed with complete transparency:
-- **Green border**: Completed successfully (`done`).
-- **Amber border**: Stopped early with an approved baseline model (`budget` or user stopped).
-- **Red border**: Failed without any approved model.
-- Displays best model family, validation and holdout scores, key EDA findings, kept features, dead ends, trust metrics, deliverable paths, and next step copy-paste commands.
+| Task Family | Modality | Status | Default Metric | Supported Models |
+|---|---|---|---|---|
+| **Tabular Regression** | Tabular / CSV / Parquet | `Stable` | RMSE / MAE / R² | Ridge, LightGBM, CatBoost, XGBoost, Ensembles |
+| **Binary Classification** | Tabular / Relational | `Stable` | ROC-AUC / PR-AUC / F1 | LogisticRegression, LightGBM, XGBoost, CatBoost |
+| **Multiclass Classification** | Tabular / Numerical | `Stable` | Multi-class Log Loss / Macro F1 | LightGBM, CatBoost, RandomForest, ExtraTrees |
+| **Multilabel Classification** | Tabular / Multi-target | `Beta` | Hamming Loss / Macro F1 | Binary Relevance, Classifier Chains, LightGBM |
+| **Time Series Forecasting** | Temporal Sequences | `Beta` | WAPE / MASE / RMSE | Lag-based GBDT, Ridge autoregression, Prophet |
+| **NLP Text Classification** | Text / Strings | `Alpha` | Accuracy / Macro F1 | TF-IDF + GBDT, DeBERTa, DistilBERT embeddings |
+| **Computer Vision** | Image directories | `Alpha` | Categorical Accuracy | ResNet, EfficientNet, ConvNeXt backbones |
+| **Clustering & Anomaly** | Unsupervised Tabular | `Alpha` | Silhouette / Contamination | IsolationForest, LocalOutlierFactor, K-Means |
 
 ---
 
-## 📁 Artifacts & Workspace
+## 🏆 Results & Benchmarks
 
-All outputs are saved cleanly inside a single isolated folder in your project:
+`mlagent` consistently demonstrates autonomous iterative gain across standard competitive datasets:
 
+### Kaggle: House Prices - Advanced Regression
+
+```text
+Round 0 (Baseline):   Ridge Regression          | CV RMSE: 0.1420 | Status: Baseline Locked
+Round 1 (FE + Model): CatBoost with Box-Cox    | CV RMSE: 0.1264 | Status: Promoted (+0.0156)
+Round 2 (FE):         Neighborhood Group Stats  | CV RMSE: 0.1228 | Status: Promoted (+0.0036)
+Round 3 (Model):      XGBoost Challenger        | CV RMSE: 0.1235 | Status: Rejected (Noise)
+Round 4 (Tuning):     Optuna Tuned LightGBM     | CV RMSE: 0.1192 | Status: Promoted (+0.0036)
+Final Packaging:      2-Model Weighted Ensemble | CV RMSE: 0.1185 | Holdout RMSE: 0.1190
 ```
-mlagent_workspace/
-  config.yaml     # Runtime configuration settings
-  memory/         # ledger.json (state), progress.md (readable summary)
-  logs/           # run.log, llm_calls.jsonl (prompts and answers), commands.log
-  artifacts/      # splits.json, features/, experiment_001/ ..., evaluation/
-  report/         # report.md and final predictions CSV
-```
 
-Your source data and files are strictly read-only and never modified.
+### Kaggle: Digit Recognizer (MNIST)
+
+```text
+Round 0 (Baseline):   Logistic Classifier       | CV Acc: 0.9120  | Status: Baseline Locked
+Round 1 (Model):      Random Forest (100 trees) | CV Acc: 0.9650  | Status: Promoted (+0.0530)
+Round 2 (Model):      Multi-Layer Perceptron    | CV Acc: 0.9780  | Status: Promoted (+0.0130)
+Round 3 (FE + Model): 2D Deskewing + MLP        | CV Acc: 0.9854  | Status: Promoted (+0.0074)
+Final Packaging:      Champion MLP Pipeline     | CV Acc: 0.9854  | Holdout Acc: 0.9848
+```
 
 ---
 
-## ⚙️ Configuration Reference
+## ⚙️ Configuration
+
+`mlagent` uses a unified Pydantic configuration hierarchy. Settings are automatically read from `mlagent_workspace/config.yaml` or overridden via CLI flags:
+
+```bash
+# Override settings on launch
+mlagent start --set llm.provider=nvidia --set limits.max_experiment_loops=12
+```
+
+### Top Configuration Keys
+
+| Section | Key | Default | Description |
+|---|---|---|---|
+| `llm` | `provider` | `ollama` | LLM backend: `ollama` (local) or `nvidia` (NVIDIA NIM cloud) |
+| `llm` | `name` | `gemma4:31b` | Model name (`gemma4:31b`, `nvidia/nemotron-3.5-super-vl-120b-a12b`, etc.) |
+| `llm` | `base_url` | `https://ollama.com` | Host endpoint (`https://ollama.com`, `http://localhost:11434`, or NIM endpoint) |
+| `llm` | `temperature`| `1.0` | Sampling temperature for the model |
+| `llm` | `top_p` | `0.95` | Nucleus sampling probability cutoff |
+| `llm` | `top_k` | `64` | Top-k sampling cutoff (Ollama only; automatically omitted for NIM) |
+| `llm` | `context` | `16384` | Context window size in tokens (`num_ctx`) |
+| `compute` | `use_gpu` | `auto` | GPU mode: `auto` (detect CUDA/MPS), `always`, or `never` |
+| `limits` | `max_experiment_loops` | `8` | Maximum experiment cycles before deliverable packaging |
+| `limits` | `max_eda_loops` | `5` | Maximum exploration rounds during initial analysis |
+| `limits` | `max_code_attempts` | `5` | Maximum self-repair retry attempts for the Coder |
+| `limits` | `code_timeout_minutes`| `30` | Timeout per script execution before cancellation |
 
 <details>
-<summary><b>Click to expand full Configuration Reference Table</b></summary>
+<summary><b>Click to expand Advanced Settings Reference</b></summary>
 <br/>
 
-| Section | Key | Default | Tier | Description |
-|---|---|---|---|---|
-| `llm` | `name` | `gemma4:31b` | basic | Ollama model name (e.g. gemma4:31b, qwen2.5:32b) |
-| `llm` | `base_url` | `https://ollama.com` | basic | Ollama server host address |
-| `llm` | `temperature` | `0.2` | advanced | Sampling temperature for the LLM |
-| `llm` | `context` | `16384` | basic | Ollama context window in tokens (num_ctx) |
-| `llm` | `request_timeout_seconds` | `900` | advanced | HTTP request timeout for LLM calls in seconds |
-| `llm` | `retries` | `2` | advanced | Maximum retries for JSON schema repair attempts |
-| `compute` | `use_gpu` | `auto` | basic | GPU utilization mode: auto (ML Lead decides per task), always, or never |
-| `limits` | `max_experiment_loops` | `8` | basic | Maximum rounds of the experiment loop |
-| `limits` | `max_eda_loops` | `4` | basic | Maximum rounds for Data Analyst during EDA |
-| `limits` | `max_data_engineer_rounds` | `3` | advanced | Maximum rounds for Data Engineer inspection |
-| `limits` | `max_data_reentries` | `2` | advanced | Maximum times EDA can be reopened on Reviewer request |
-| `limits` | `code_timeout_minutes` | `30` | basic | Execution time limit for a single script run in minutes |
-| `limits` | `max_code_attempts` | `5` | basic | Maximum retry attempts for Coder to fix script errors |
-| `limits` | `max_consecutive_crashes` | `3` | advanced | Stop rule threshold for consecutive script crashes |
-| `limits` | `tune_trial_count` | `20` | advanced | Number of Optuna tuning trials per tuning round |
-| `limits` | `candidates_per_feature_round` | `15` | advanced | Maximum candidate feature ideas proposed per round (recommended 10-15) |
-| `evaluation` | `score_tolerance_relative` | `0.05` | advanced | Relative mismatch allowed between logged and recomputed validation scores |
-| `evaluation` | `holdout_gap_std_multiplier` | `4.0` | advanced | Multiplier of CV standard deviation allowed for holdout score drop |
-| `evaluation` | `holdout_gap_relative_limit` | `0.08` | advanced | Maximum relative drop allowed on holdout score before flagging |
-| `evaluation` | `large_score_jump_std_multiplier` | `4.0` | advanced | Score jump threshold (std multiplier) that triggers rejection if leakage flag is set |
-| `workspace` | `workspace_folder_name` | `mlagent_workspace` | basic | Folder name inside the project directory used for artifacts and memory |
-| `workspace` | `archived_workspace_prefix` | `mlagent_workspace_old_` | advanced | Prefix for archived previous workspace runs |
-| `workspace` | `big_file_mb` | `200` | advanced | File size in megabytes above which files are flagged as large |
-| `workspace` | `max_files_in_listing` | `40` | advanced | Maximum number of files shown in data engineer directory listing |
-| `workspace` | `ignored_folders` | `['.git', '.venv', 'venv', '__pycache__', 'node_modules']` | advanced | Folder names to skip when scanning the project |
-| `machine` | `low_ram_warning_gb` | `4.0` | advanced | Free system RAM in GB below which a low memory warning is shown |
-| `report` | `max_words` | `900` | basic | Target word count limit for the final Markdown report |
-| `ui` | `mode` | `auto` | basic | Terminal display mode: auto, rich, or plain |
-| `ui` | `theme` | `dark` | basic | Color theme: dark, light, or mono |
-| `ui` | `verbosity` | `normal` | basic | Event logging verbosity: quiet, normal, or detailed |
-| `ui` | `timestamps` | `True` | advanced | Show timestamps on log output lines |
-| `ui` | `show_environment` | `True` | advanced | Display environment probe check table on startup |
-| `ui` | `confirm_before_start` | `True` | advanced | Ask confirmation before starting execution |
-| `ui` | `ascii_only` | `False` | advanced | Use ASCII characters only instead of Unicode symbols |
-| `ui` | `log_width` | `100` | advanced | Terminal output line width limit |
+| Section | Key | Default | Description |
+|---|---|---|---|
+| `llm` | `api_key` | `""` | API key (falls back to `NVIDIA_API_KEY` or `OLLAMA_API_KEY`) |
+| `llm` | `enable_thinking` | `True` | Enable reasoning tokens extraction if supported |
+| `limits` | `tune_trial_count` | `20` | Optuna trials evaluated per tuning round |
+| `limits` | `candidates_per_feature_round` | `10` | Maximum candidate feature ideas proposed per round |
+| `evaluation` | `score_tolerance_relative` | `0.05` | Relative score discrepancy allowed before flagging |
+| `evaluation` | `holdout_gap_std_multiplier` | `4.0` | CV standard deviation multiplier allowed on holdout drop |
+| `workspace` | `workspace_folder_name` | `mlagent_workspace`| Name of directory storing run assets |
+| `report` | `max_words` | `900` | Target length for final executive summary report |
+| `ui` | `mode` | `auto` | Rich terminal mode: `auto`, `rich`, or `plain` |
+| `ui` | `theme` | `dark` | Terminal color scheme: `dark`, `light`, or `mono` |
 
 </details>
 
 ---
 
-## ❓ Frequently Asked Questions
+## 🛡️ Safety & Privacy
+
+- **100% Local & Sovereign**: When using Ollama, all model inference occurs locally on your machine. No row of your data, schema, prompt, or metric is ever transmitted to an external server.
+- **Enterprise Cloud Security**: When configured with NVIDIA NIM (`provider: nvidia`), calls travel over encrypted HTTPS directly to NVIDIA's inference endpoints with zero user data retention for model training.
+- **Non-Destructive Ingestion**: Input files and directories are opened strictly read-only. All intermediate data, scripts, and model checkpoints are isolated in `mlagent_workspace/`.
+- **Sandboxed Subprocess Execution**: Scripts run in sandboxed worker processes with hard execution time limits (`code_timeout_minutes`) and traceback capture to prevent runaway executions.
+
+---
+
+## ❓ FAQ & Troubleshooting
 
 <details>
 <summary><b>What if Ollama is not running?</b></summary>
 <br/>
-<code>mlagent</code> detects when the local Ollama server is unreachable and issues a clear alert prompting you to run <code>ollama serve</code> or start the Ollama desktop application. You can safely restart Ollama and run <code>mlagent start</code> to resume immediately.
+<code>mlagent</code> performs an automated environment probe on startup. If Ollama is unreachable, it provides a clean alert with copy-paste instructions to launch <code>ollama serve</code> or pull the missing model.
 </details>
 
 <details>
-<summary><b>How do I resume an interrupted run?</b></summary>
+<summary><b>How do I use NVIDIA NIM?</b></summary>
 <br/>
-If execution was interrupted (e.g. system reboot or <code>Ctrl+C</code>), simply navigate to the directory and run <code>mlagent resume</code> or <code>mlagent start</code> and choose <b>resume</b>. The pipeline resumes cleanly from the exact point of interruption without losing previous experiments.
+Obtain an API key from <a href="https://build.nvidia.com/">build.nvidia.com</a>, set the environment variable, and run:
+<pre><code>export NVIDIA_API_KEY="nvapi-..."
+mlagent start --set llm.provider=nvidia</code></pre>
 </details>
 
 <details>
-<summary><b>Can I use a remote Ollama server or different model?</b></summary>
+<summary><b>How do I resume an interrupted pipeline?</b></summary>
 <br/>
-Yes. Edit <code>mlagent_workspace/config.yaml</code> or pass flags directly:
-<pre><code>mlagent start --set llm.base_url="http://192.168.1.50:11434" --set llm.name="qwen2.5:32b"</code></pre>
+If your machine reboots or you hit <code>Ctrl+C</code>, simply run:
+<pre><code>mlagent resume</code></pre>
+The graph state is restored from <code>mlagent_workspace/memory/ledger.json</code> and continues from the exact node where it paused.
 </details>
 
 <details>
-<summary><b>How is data leakage prevented?</b></summary>
+<summary><b>How is data leakage strictly prevented?</b></summary>
 <br/>
-All preprocessing and feature statistics (medians, frequency encoders, scalers) are fit strictly on training folds inside <code>fit_preparation</code> and deterministically transformed on validation/test sets via <code>apply_preparation</code>. The Evaluator independently checks fold overlap and flags distribution shifts.
+All preprocessing (imputation, target encoding, scaling, group aggregations) is designed into isolated two-phase scripts: <code>fit_preparation(train_fold)</code> and <code>apply_preparation(val_or_test_fold)</code>. The Evaluator independently recomputes metrics to verify that validation indices never touch training fits.
 </details>
+
+<details>
+<summary><b>Why was a challenger model rejected?</b></summary>
+<br/>
+The Evaluator rejects candidate models if their CV score fails to beat the Champion, if the holdout score degrades by more than 4x the cross-validation standard deviation, or if anomalous score jumps indicate potential label leakage.
+</details>
+
+<details>
+<summary><b>Can I inspect live progress without interrupting?</b></summary>
+<br/>
+Yes. Open another terminal in the project directory and run:
+<pre><code>mlagent status</code></pre>
+This prints the current phase, completed rounds, and active scoreboard without locking the database.
+</details>
+
+---
+
+## 🛠️ Development & Roadmap
+
+### Local Development Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/Gurumurthy30/mlagent.git
+cd mlagent
+
+# Create virtual environment
+python -m venv .venv
+source .venv/bin/activate  # Or .\.venv\Scripts\Activate.ps1 on Windows
+
+# Install in editable mode with development dependencies
+pip install -e ".[dev]"
+
+# Run test suite and linter
+pytest
+ruff check .
+```
+
+### Roadmap
+
+- [ ] **Deep Tabular Models**: Native integration of TabNet, FT-Transformer, and SAINT architectures.
+- [ ] **Multi-Modal Late Fusion**: Combined text, image, and tabular feature extraction into unified gradient boosters.
+- [ ] **Distributed Tuning**: Multi-GPU parallel trial distribution via Ray Tune.
+- [ ] **Automated Platform Exporter**: One-click Kaggle and Hugging Face model card and submission artifact publishing.
+
+---
+
+## 🤝 Acknowledgements
+
+`mlagent` stands on the shoulders of the open-source machine learning and LLM engineering communities:
+
+- [LangGraph](https://github.com/langchain-ai/langgraph) & [LangChain](https://github.com/langchain-ai/langchain) for robust multi-agent state machines.
+- [Ollama](https://ollama.com) & [NVIDIA NIM](https://build.nvidia.com/) for sovereign and accelerated model inference.
+- [Rich](https://github.com/Textualize/rich) for terminal UI and scoreboard rendering.
+- [Optuna](https://optuna.org/) for Bayesian hyperparameter optimization.
+- [LightGBM](https://github.com/microsoft/LightGBM), [CatBoost](https://catboost.ai/), [XGBoost](https://xgboost.ai/), and [scikit-learn](https://scikit-learn.org/) for the core modeling backbones.
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the [MIT License](LICENSE).
